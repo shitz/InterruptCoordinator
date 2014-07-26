@@ -315,6 +315,7 @@ end
 function InterruptCoordinator:OnDelayedSyncTimer()
 	-- We need this function since sometimes messages don't get sent over a channel if
 	-- you just joined them.
+	self:SendSyncRequest()
 	self:SendPlayerInterrupts()
 end
 -----------------------------------------------------------------------------------------------
@@ -543,7 +544,8 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 				return
 			end
 			int.remainingCD = interrupt.remainingCD
-			if int.remainingCD < 0 then
+			int.onCD = true
+			if int.remainingCD <= 0 then
 				int.remainingCD = 0
 			end
 		end
