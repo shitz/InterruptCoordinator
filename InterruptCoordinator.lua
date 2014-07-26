@@ -62,7 +62,7 @@ local kVerticalPlayerPadding = 0
 local kDefaultGroup = "Main"
 
 local kUIUpdateInterval = 0.033
-local kBroadcastInterval = 0.5
+local kBroadcastInterval = 1
 -----------------------------------------------------------------------------------------------
 -- Initialization
 -----------------------------------------------------------------------------------------------
@@ -512,7 +512,7 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	if channel ~= self.commChannel then return end
 	
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
-		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
+		--glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
 		-- Check if this a new player.
 		if not self.playerToGroup[msg.senderName] then
 			-- Add player to group.
@@ -527,8 +527,8 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	elseif msg.type == MsgType.CD_UPDATE then
 		-- Update remaining cooldowns.
 		for idx, interrupt in ipairs(msg.interrupts) do
-			glog:debug("Received CD_UPDATE from " .. msg.senderName .. " for spell " .. tostring(interrupt.spellID) ..
-				   	   ". Remaining CD: " .. interrupt.remainingCD .. " s.")
+			--glog:debug("Received CD_UPDATE from " .. msg.senderName .. " for spell " .. tostring(interrupt.spellID) ..
+			--	   	   ". Remaining CD: " .. interrupt.remainingCD .. " s.")
 			local int = self:GetPlayerInterruptForSpellID(msg.senderName, interrupt.spellID)
 			if not int then
 				glog:debug("Received cooldown update for untracked spell.")
@@ -542,7 +542,7 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 		end
 	elseif msg.type == MsgType.SYNC_REQUEST then
 		-- Broadcast local interrupts.
-		glog:debug("Received SYNC_REQUEST from " .. msg.senderName)
+		--glog:debug("Received SYNC_REQUEST from " .. msg.senderName)
 		self:SendPlayerInterrupts()
 	end
 end
