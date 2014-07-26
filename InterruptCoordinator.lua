@@ -170,6 +170,9 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 		self:Show()
 	elseif arg == "hide" then
 		self:Hide()
+	elseif arg == "join" then
+		self.groupLeaderInfo = self:GetGroupLeader()
+		self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
 	elseif arg == "sync" then
 		self:OnGroupJoin()
 	end
