@@ -170,8 +170,8 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 		self:Show()
 	elseif arg == "hide" then
 		self:Hide()
-	elseif arg == "layout" then
-		self:LayoutGroupContainer(self.groups[kDefaultGroup])
+	elseif arg == "sync" then
+		self:OnGroupJoin()
 	end
 end
 
@@ -389,6 +389,10 @@ function InterruptCoordinator:OnGroupJoin()
 	end
 
 	self.groupLeaderInfo = self:GetGroupLeader()
+	if not self.groupLeaderInfo then
+		glog:debug("No Group Leader found!!")
+		return
+	end
 	glog:debug("OnGroupJoin: Group Leader: " .. self.groupLeaderInfo.strCharacterName)
 		
 	-- Join the communication channel
@@ -406,16 +410,18 @@ end
 
 function InterruptCoordinator:OnGroupUpdated()
 	-- Check if still have the same group leader and if not switch to new comm channel.
-	local leader = self:GetGroupLeader()
-	if self.groupLeaderInfo.strCharacterName ~= leader.strCharacterName then
-		self.groupLeaderInfo = leader
-		self:LeaveGroupChannel()
-		self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
+	--glog:debug("In OnGroupUpdated.")
+	--local leader = self:GetGroupLeader()
+	--if self.groupLeaderInfo.strCharacterName ~= leader.strCharacterName then
+	--	glog:debug("New group leader " .. leader.strCharacterName)
+	--	self.groupLeaderInfo = leader
+	--	self:LeaveGroupChannel()
+	--self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
 		-- Rebroadcast interrupts
-		self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = self.player:GetName(), 
-				  interrupts = self.partyInterrupts[self.player:GetName()]})
-	end
+	--	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
+	--			  senderName = self.player:GetName(), 
+	--			  interrupts = self.partyInterrupts[self.player:GetName()]})
+	--end
 end
 
 function InterruptCoordinator:GetGroupLeader()
