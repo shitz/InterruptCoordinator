@@ -55,9 +55,9 @@ local MsgType = {
 }
 
 local kBarHeight = 25
-local kPlayerNameHeight = 23
+local kPlayerNameHeight = 18
 local kVerticalBarPadding = 0
-local kVerticalPlayerPadding = 3
+local kVerticalPlayerPadding = 0
 
 local kDefaultGroup = "Main"
 
@@ -336,6 +336,11 @@ function InterruptCoordinator:OnHideGroupContainerButtonPressed(wHandler)
 end
 
 function InterruptCoordinator:OnSyncButtonPressed(wHandler)
+	for name, interrupts in pairs(self.partyInterrupts) do
+		if name ~= self.player:GetName() then 
+			self:RemovePlayerFromGroup(self.playerToGroup[name], name)
+		end
+	end
 	self:OnGroupJoin()
 end
 
@@ -397,6 +402,7 @@ function InterruptCoordinator:GetTieredSpellIDFromAbilityID(ID)
 end
 
 function InterruptCoordinator:GetPlayerInterruptForSpellID(playerName, spellID)
+	if not self.partyInterrupts[playerName] then return nil end
 	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
 		if interrupt.spellID == spellID then return interrupt end
 	end
@@ -580,6 +586,29 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 	player.container:FindChild("PlayerName"):SetText(playerName)
 	player.interrupts = {}
 	table.insert(self.groups[groupName].players, player)
+end
+
+function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
+	if not self.playerToGroup[playerName] or groupName ~= self.playerToGroup[playerName] then
+		glog:debug(playerName .. " doesn't belong to group '" .. groupName .. "'.")
+		return
+	end
+	local group = self.groups[self.playerToGroup[playerName]]
+	local player = nil
+	local idx = 0
+	for _, p in ipairs(group) do
+		idx = idx + 1
+		if p.name and p.name == playerName then
+			player = p
+			break
+		end
+	end
+	if not player then
+		glog:debug("Tried to remove non existant player.")
+		return
+	end
+	player.container:Destroy()
+	table.remove(group, idx)
 end
 
 -- Adds a bar for a given interrupt to the player frame.
