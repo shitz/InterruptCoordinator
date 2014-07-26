@@ -286,9 +286,10 @@ function InterruptCoordinator:OnUITimer()
 	-- Update progress bars.
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
-			local playerInterrupts = self.partyInterrupts[player.name]
 			for idx, interrupt in ipairs(player.interrupts) do
-				interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
+				if interrupt.remainingCD > 0 then 
+					interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
+				end
 				interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
 			end
 		end
@@ -381,6 +382,9 @@ function InterruptCoordinator:OnDelayedAbilityBookChange()
 	self:UpdateBarsForPlayer(self.player:GetName(), self.partyInterrupts[self.player:GetName()], interrupts)
 	self.partyInterrupts[self.player:GetName()] = interrupts
 	self:LayoutGroupContainer(self.groups[self.playerToGroup[self.player:GetName()]])
+	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
+				  senderName = self.player:GetName(), 
+				  interrupts = self.partyInterrupts[self.player:GetName()]})
 end
 
 -----------------------------------------------------------------------------------------------
@@ -495,7 +499,7 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 				glog:debug("Received cooldown update for untracked spell.")
 				return
 			end
-			interrupt.remainingCD = int.remainingCD
+			int.remainingCD = interrupt.remainingCD
 		end
 	end
 end
