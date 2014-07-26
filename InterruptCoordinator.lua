@@ -55,7 +55,7 @@ local MsgType = {
 }
 
 local kBarHeight = 25
-local kPlayerNameHeight = 18
+local kPlayerNameHeight = 23
 local kVerticalBarPadding = 0
 local kVerticalPlayerPadding = 3
 
@@ -444,21 +444,6 @@ end
 
 function InterruptCoordinator:OnGroupLeft()
 	self:Reset()
-end
-
-function InterruptCoordinator:OnGroupUpdated()
-	-- Check if still have the same group leader and if not switch to new comm channel.
-	--glog:debug("In OnGroupUpdated.")
-	if not self.isInitialized then return end
-	local leader = self:GetGroupLeader()
-	if self.groupLeaderInfo.strCharacterName ~= leader.strCharacterName then
-		glog:debug("New group leader " .. leader.strCharacterName)
-		self.groupLeaderInfo = leader
-		self:LeaveGroupChannel()
-		self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
-		-- Rebroadcast interrupts
-		Apollo.CreateTimer("DelayedSyncTimer", 1, false)
-	end
 end
 
 function InterruptCoordinator:GetGroupLeader()
