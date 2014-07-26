@@ -389,6 +389,7 @@ function InterruptCoordinator:OnGroupJoin()
 	end
 
 	self.groupLeaderInfo = self:GetGroupLeader()
+	glog:debug("OnGroupJoin: Group Leader: " .. self.groupLeaderInfo.strCharacterName)
 		
 	-- Join the communication channel
 	self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
@@ -440,6 +441,7 @@ function InterruptCoordinator:JoinGroupChannel(leaderName)
 	if cname ~= self.channelName then
 		self.channelName = cname
 		self.commChannel = ICCommLib.JoinChannel(self.channelName, "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. cname)
 	end
 end
 
