@@ -51,6 +51,7 @@ local MsgType = {
 	--SLOTTED_INTERRUPTS = 1,
 	INTERRUPTS_UPDATE = 1,
 	CD_UPDATE = 2,
+	SYNC_REQUEST = 3,
 }
 
 local kBarHeight = 25
@@ -142,6 +143,8 @@ function InterruptCoordinator:OnDocLoaded()
 
 		Apollo.RegisterEventHandler("AbilityBookChange", "OnAbilityBookChange", self)
 		Apollo.RegisterTimerHandler("DelayedAbilityBookChange", "OnDelayedAbilityBookChange", self)
+		
+		Apollo.RegisterTimerHandler("DelayedSyncTimer", "OnDelayedSyncTimer", self)
 
 		Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 		
@@ -170,9 +173,6 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 		self:Show()
 	elseif arg == "hide" then
 		self:Hide()
-	elseif arg == "join" then
-		self.groupLeaderInfo = self:GetGroupLeader()
-		self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
 	elseif arg == "sync" then
 		self:OnGroupJoin()
 	end
@@ -192,7 +192,8 @@ function InterruptCoordinator:Initialize()
 	self:AddPlayerToGroup(kDefaultGroup , self.player:GetName())
 	-- Add bar for each interrupt currently equipped
 	for idx, interrupt in ipairs(self.partyInterrupts[self.player:GetName()]) do
-		self:AddBarToPlayer(self.player:GetName(), interrupt.spellID, interrupt.cooldown, interrupt.remainingCD) 
+		self:AddBarToPlayer(self.player:GetName(), interrupt.spellID, interrupt.cooldown, 
+							interrupt.remainingCD, interrupt.onCD) 
 	end
 	-- Layout GroupWindow
 	self:LayoutGroupContainer(self.groups[kDefaultGroup])
@@ -257,7 +258,11 @@ function InterruptCoordinator:OnBroadcastTimer()
 	self:UpdateRemainingCDForCurrentInterrupts()
 	local toSend = {}
 	for idx, interrupt in ipairs(self.partyInterrupts[self.player:GetName()]) do
-		if interrupt.remainingCD > 0 then
+		if interrupt.onCD then
+			if interrupt.remainingCD <= 0 then
+				interrupt.remainingCD = 0
+				interrupt.onCD = false
+			end
 			table.insert(toSend, interrupt)
 		end
 	end
@@ -270,15 +275,17 @@ function InterruptCoordinator:OnBroadcastTimer()
 	-- Update remaining cooldowns.
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
-			local playerInterrupts = self.partyInterrupts[player.name]
 			for idx, interrupt in ipairs(player.interrupts) do
 				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
 				-- Only update if remaining cooldown has changed.
-				if int and interrupt.remainingCD ~= int.remainingCD then
+				if int and int.onCD then
 					interrupt.remainingCD = int.remainingCD
 					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD < 0 then
+					if interrupt.remainingCD <= 0 then
 						interrupt.remainingCD = 0
+						interrupt.onCD = false
+					else
+						interrupt.onCD = true
 					end
 				end
 			end
@@ -291,11 +298,12 @@ function InterruptCoordinator:OnUITimer()
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
 			for idx, interrupt in ipairs(player.interrupts) do
-				if interrupt.remainingCD > 0 then 
+				if interrupt.onCD then 
 					interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
 					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD < 0 then
+					if interrupt.remainingCD <= 0 then
 						interrupt.remainingCD = 0
+						interrupt.onCD = false
 					end
 				end
 				interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
@@ -304,7 +312,11 @@ function InterruptCoordinator:OnUITimer()
 	end
 end
 
-
+function InterruptCoordinator:OnDelayedSyncTimer()
+	-- We need this function since sometimes messages don't get sent over a channel if
+	-- you just joined them.
+	
+end
 -----------------------------------------------------------------------------------------------
 -- InterruptCoordinatorForm Functions
 -----------------------------------------------------------------------------------------------
@@ -318,8 +330,12 @@ function InterruptCoordinator:OnCancel()
 	self.wndMain:Close() -- hide the window
 end
 
-function InterruptCoordinator:HideGroupContainer(wHandler)
+function InterruptCoordinator:OnHideGroupContainerButtonPressed(wHandler)
 	self:Hide()
+end
+
+function InterruptCoordinator:OnSyncButtonPressed(wHandler)
+	self:OnGroupJoin()
 end
 
 -----------------------------------------------------------------------------------------------
@@ -343,9 +359,14 @@ function InterruptCoordinator:GetCurrentInterrupts()
 		if Interrupts[ID] then
 			local spellID = self:GetTieredSpellIDFromAbilityID(ID)
 			local spell = GameLib.GetSpell(spellID)
+			local onCD = false
+			if spell:GetCooldownRemaining() > 0 then
+				onCD = true
+			end
 			table.insert(interrupts, {spellID = spellID, 
 									  cooldown = spell:GetCooldownTime(), 
-									  remainingCD = spell:GetCooldownRemaining()})
+									  remainingCD = spell:GetCooldownRemaining(),
+									  onCD = onCD})
 		end
 	end
 	
@@ -357,6 +378,9 @@ function InterruptCoordinator:UpdateRemainingCDForCurrentInterrupts()
 	for idx, interrupt in ipairs(self.partyInterrupts[self.player:GetName()]) do
 		spell = GameLib.GetSpell(interrupt.spellID)
 		interrupt.remainingCD = spell:GetCooldownRemaining()
+		if interrupt.remainingCD > 0 then 
+			interrupt.onCD = true
+		end
 	end
 end
 
@@ -414,9 +438,7 @@ function InterruptCoordinator:OnGroupJoin()
 	self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
 	
 	-- Broadcast our current interrupts on the group channel.
-	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = self.player:GetName(), 
-				  interrupts = self.partyInterrupts[self.player:GetName()]})
+	Apollo.CreateTimer("DelayedSyncTimer", 1, false)
 end
 
 function InterruptCoordinator:OnGroupLeft()
@@ -426,17 +448,16 @@ end
 function InterruptCoordinator:OnGroupUpdated()
 	-- Check if still have the same group leader and if not switch to new comm channel.
 	--glog:debug("In OnGroupUpdated.")
-	--local leader = self:GetGroupLeader()
-	--if self.groupLeaderInfo.strCharacterName ~= leader.strCharacterName then
-	--	glog:debug("New group leader " .. leader.strCharacterName)
-	--	self.groupLeaderInfo = leader
-	--	self:LeaveGroupChannel()
-	--self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
+	if not self.isInitialized then return end
+	local leader = self:GetGroupLeader()
+	if self.groupLeaderInfo.strCharacterName ~= leader.strCharacterName then
+		glog:debug("New group leader " .. leader.strCharacterName)
+		self.groupLeaderInfo = leader
+		self:LeaveGroupChannel()
+		self:JoinGroupChannel(self.groupLeaderInfo.strCharacterName)
 		-- Rebroadcast interrupts
-	--	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-	--			  senderName = self.player:GetName(), 
-	--			  interrupts = self.partyInterrupts[self.player:GetName()]})
-	--end
+		Apollo.CreateTimer("DelayedSyncTimer", 1, false)
+	end
 end
 
 function InterruptCoordinator:GetGroupLeader()
@@ -452,6 +473,7 @@ function InterruptCoordinator:GetGroupLeader()
 	
 	return leaderInfo
 end
+
 -----------------------------------------------------------------------------------------------
 -- Communication Functions
 -----------------------------------------------------------------------------------------------
@@ -478,6 +500,19 @@ function InterruptCoordinator:SendMsg(msg)
 		glog:debug("Send message: " .. dump(msg))
 		self.commChannel:SendMessage(msg)
 	end
+end
+
+-- Broadcasts the local player interrupts.
+function InterruptCoordinator:SendPlayerInterrupts()
+	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
+				  senderName = self.player:GetName(), 
+				  interrupts = self.partyInterrupts[self.player:GetName()]})
+end
+
+-- Broadcast a sync request.
+function InterruptCoordinator:SendSyncRequest()
+	self:SendMsg({type = MsgType.SYNC_REQUEST,
+				  senderName = self.player:GetName()})
 end
 
 -- Main message handling routine.
@@ -508,7 +543,14 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 				return
 			end
 			int.remainingCD = interrupt.remainingCD
+			if int.remainingCD < 0 then
+				int.remainingCD = 0
+			end
 		end
+	elseif msg.type == MsgType.SYNC_REQUEST then
+		-- Broadcast local interrupts.
+		glog:debug("Received SYNC_REQUEST from " .. msg.senderName)
+		self:SendPlayerInterrupts()
 	end
 end
 
@@ -554,7 +596,7 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 end
 
 -- Adds a bar for a given interrupt to the player frame.
-function InterruptCoordinator:AddBarToPlayer(playerName, spellID, CD, remainingCD)
+function InterruptCoordinator:AddBarToPlayer(playerName, spellID, CD, remainingCD, onCD)
 	local player = self:GetPlayer(playerName)
 	if not player then
 		glog:debug("Tried to add bar to non-existing player!")
@@ -571,6 +613,7 @@ function InterruptCoordinator:AddBarToPlayer(playerName, spellID, CD, remainingC
 	interrupt.spellID = spellID
 	interrupt.cooldown = CD
 	interrupt.remainingCD = remainingCD
+	interrupt.onCD = onCD
 	interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
 	interrupt.bar:FindChild("ProgressBar"):SetMax(CD)
 	interrupt.bar:FindChild("ProgressBar"):SetProgress(remainingCD)
@@ -616,7 +659,7 @@ function InterruptCoordinator:UpdateBarsForPlayer(playerName, prevInterrupts, ne
 	if newInterrupts then
 		-- Add progression bar for each interrupt.
 		for idx, interrupt in ipairs(newInterrupts) do
-			self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.cooldown, interrupt.remainingCD) 
+			self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.cooldown, interrupt.remainingCD, interrupt.onCD) 
 		end
 	end
 end
