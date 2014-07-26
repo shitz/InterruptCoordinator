@@ -315,7 +315,7 @@ end
 function InterruptCoordinator:OnDelayedSyncTimer()
 	-- We need this function since sometimes messages don't get sent over a channel if
 	-- you just joined them.
-	
+	self:SendPlayerInterrupts()
 end
 -----------------------------------------------------------------------------------------------
 -- InterruptCoordinatorForm Functions
