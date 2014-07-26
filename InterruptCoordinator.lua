@@ -460,7 +460,8 @@ end
 -- Send a message on the communication channel.
 function InterruptCoordinator:SendMsg(msg)
 	if self.commChannel then
-		self.commChannel:SendMessage(message)
+		--glog:debug("Send message: " .. dump(msg))
+		self.commChannel:SendMessage(msg)
 	end
 end
 
