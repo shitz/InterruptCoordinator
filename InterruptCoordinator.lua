@@ -276,6 +276,10 @@ function InterruptCoordinator:OnBroadcastTimer()
 				-- Only update if remaining cooldown has changed.
 				if int and interrupt.remainingCD ~= int.remainingCD then
 					interrupt.remainingCD = int.remainingCD
+					-- Make sure remainingCD is never < 0.
+					if interrupt.remainingCD < 0 then
+						interrupt.remainingCD = 0
+					end
 				end
 			end
 		end
@@ -289,6 +293,10 @@ function InterruptCoordinator:OnUITimer()
 			for idx, interrupt in ipairs(player.interrupts) do
 				if interrupt.remainingCD > 0 then 
 					interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
+					-- Make sure remainingCD is never < 0.
+					if interrupt.remainingCD < 0 then
+						interrupt.remainingCD = 0
+					end
 				end
 				interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
 			end
