@@ -353,6 +353,20 @@ function InterruptCoordinator:OnSyncButtonPressed(wHandler)
 	Apollo.StartTimer("UITimer")
 end
 
+function InterruptCoordinator:OnSave(level)
+    if level ~= GameLib.CodeEnumAddonSaveLevel.Character then
+        return nil
+    end
+
+	-- Create table to hold our save data.
+	local saveData = {}
+	saveData.left, saveData.top, saveData.right, saveData.bottom = self.groups[kDefaultGroup].container:GetAnchorOffsets()
+	return saveData
+end
+
+function InterruptCoordinator:OnRestore(level, data)
+	self.saveData = data
+end
 -----------------------------------------------------------------------------------------------
 -- LAS Functions
 -----------------------------------------------------------------------------------------------
@@ -589,6 +603,10 @@ function InterruptCoordinator:NewGroup(groupName)
 	local group = {}
 	group.container = Apollo.LoadForm(self.xmlDoc, "GroupContainer", nil, self)
 	group.container:SetData({groupName = groupName})
+	if self.saveData then
+		group.container:SetAnchorOffsets(self.saveData.left, self.saveData.top,
+										 self.saveData.right, self.saveData.bottom)
+	end
 	group.players = {}
 	self.groups[groupName] = group
 end
