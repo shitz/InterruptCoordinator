@@ -270,24 +270,24 @@ function InterruptCoordinator:OnBroadcastTimer()
 	end
 	
 	-- Update remaining cooldowns.
-	for groupName, group in pairs(self.groups) do
-		for idx, player in ipairs(group.players) do
-			for idx, interrupt in ipairs(player.interrupts) do
-				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
-				-- Only update if remaining cooldown has changed.
-				if int and int.onCD then
-					interrupt.remainingCD = int.remainingCD
-					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD <= 0 then
-						interrupt.remainingCD = 0
-						interrupt.onCD = false
-					else
-						interrupt.onCD = true
-					end
-				end
-			end
-		end
-	end
+	--for groupName, group in pairs(self.groups) do
+	--	for idx, player in ipairs(group.players) do
+	--		for idx, interrupt in ipairs(player.interrupts) do
+	--			local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
+	--			-- Only update if remaining cooldown has changed.
+	--			if int and int.onCD then
+	--				interrupt.remainingCD = int.remainingCD
+	--				-- Make sure remainingCD is never < 0.
+	--				if interrupt.remainingCD <= 0 then
+	--					interrupt.remainingCD = 0
+	--					interrupt.onCD = false
+	--				else
+	--					interrupt.onCD = true
+	--				end
+	--			end
+	--		end
+	--	end
+	--end
 end
 
 function InterruptCoordinator:OnUITimer()
@@ -295,13 +295,16 @@ function InterruptCoordinator:OnUITimer()
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
 			for idx, interrupt in ipairs(player.interrupts) do
-				if interrupt.onCD then 
-					interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
+				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
+				if int and int.onCD then
+					int.remainingCD = int.remainingCD - kUIUpdateInterval
 					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD <= 0 then
-						interrupt.remainingCD = 0
-						interrupt.onCD = false
+					if int.remainingCD <= 0 then
+						int.remainingCD = 0
+						int.onCD = false
 					end
+					interrupt.remainingCD = int.remainingCD
+					interrupt.onCD = int.onCD
 				end
 				if interrupt.bar:FindChild("ProgressBar") then
 					interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
@@ -576,10 +579,12 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 				glog:debug("Received cooldown update for untracked spell.")
 				return
 			end
-			int.remainingCD = interrupt.remainingCD
-			int.onCD = true
-			if int.remainingCD <= 0 then
-				int.remainingCD = 0
+			if int.remainingCD > interrupt.remainingCD then
+				int.remainingCD = interrupt.remainingCD
+				int.onCD = true
+				if int.remainingCD <= 0 then
+					int.remainingCD = 0
+				end
 			end
 		end
 	elseif msg.type == MsgType.SYNC_REQUEST then
