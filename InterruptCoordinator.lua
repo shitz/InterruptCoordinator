@@ -207,7 +207,7 @@ function InterruptCoordinator:Reset()
 	Apollo.StopTimer("BroadcastTimer")
 	Apollo.StopTimer("UITimer")
 	
-	self:LeaveGroupChannel()
+	self:LeaveGroupChannels()
 	
 	for name, group in pairs(self.groups) do
 		group.container:DestroyChildren()
@@ -517,7 +517,7 @@ function InterruptCoordinator:SendMsg(msg)
 		--glog:debug("Send message: " .. dump(msg))
 		local idx = math.random(kNumOfChannels)
 		self.commChannels[idx]:SendMessage(msg)
-		glog:debug(string.format("Send message on channel %d: %s", i, dump(msg))) 
+		glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
 	end
 end
 
