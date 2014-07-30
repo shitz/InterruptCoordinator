@@ -518,7 +518,7 @@ function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, base
 	if not interrupt then return end
 	if interrupt.remainingCD < 5 then
 		interrupt.remainingCD = interrupt.cooldown
-		interrupt.cooldown = true
+		interrupt.onCD = true
 	end
 end
 
