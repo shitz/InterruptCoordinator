@@ -137,17 +137,18 @@ function InterruptCoordinator:OnDocLoaded()
 		Apollo.RegisterEventHandler("Group_Join", "OnGroupJoin", self)
 		Apollo.RegisterEventHandler("Group_Left", "OnGroupLeft", self)
 		Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
+		
+		Apollo.RegisterEventHandler("ICCommJoinResult", OnICCommJoinResult, self)
 
 		Apollo.RegisterEventHandler("CombatLogCCState", "OnCombatLogCCState", self)
-		Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
-		Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
+		--Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
+		--Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 
 		Apollo.RegisterEventHandler("AbilityBookChange", "OnAbilityBookChange", self)
 		Apollo.RegisterTimerHandler("DelayedAbilityBookChange", "OnDelayedAbilityBookChange", self)
 		
 		Apollo.RegisterTimerHandler("DelayedSyncTimer", "OnDelayedSyncTimer", self)
 
-		Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 		
 		Apollo.RegisterTimerHandler("BroadcastTimer", "OnBroadcastTimer", self)
 		Apollo.RegisterTimerHandler("UITimer", "OnUITimer", self)
@@ -165,17 +166,27 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 	-- show the window
 	--ints = self:GetCurrentInterrupts()
 	--glog:debug(dump(ints))
-	if arg == "init" then
+	--glog:debug(splitString(arg))
+	args = splitString(arg)
+	if #args < 1 then return end
+	if args[1] == "init" then
 		self:Initialize()
 		self:Show()
-	elseif arg == "reset" then
+	elseif args[1] == "reset" then
 		self:Reset()
-	elseif arg == "show" then
+	elseif args[1] == "show" then
 		self:Show()
-	elseif arg == "hide" then
+	elseif args[1] == "hide" then
 		self:Hide()
-	elseif arg == "sync" then
+	elseif args[1] == "sync" then
 		self:OnGroupJoin()
+	elseif args[1] == "join" then
+		if #args < 2 then
+			print("No channel name provided.")
+			return
+		end
+		ICCommLib.JoinChannel(args[2], "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. args[2])
 	end
 end
 
@@ -257,7 +268,7 @@ function InterruptCoordinator:OnBroadcastTimer()
 		if interrupt.onCD then
 			if interrupt.remainingCD <= 0 then
 				interrupt.remainingCD = 0
-				interrupt.onCD = false
+				--interrupt.onCD = false
 			end
 			table.insert(toSend, interrupt)
 		end
@@ -528,7 +539,6 @@ end
 -- Joins the group channel for inter addon communication.
 function InterruptCoordinator:JoinGroupChannels(leaderName)
 	--if #self.commChannels == kNumOfChannels then return end
-	
 	for i=1,kNumOfChannels do
 		local cname = string.format("IC_%s_%d", leaderName, i)
 		self.commChannels[i] = ICCommLib.JoinChannel(cname, "OnCommMessageReceived", self)
@@ -539,6 +549,10 @@ end
 -- Leaves the group channel
 function InterruptCoordinator:LeaveGroupChannels()
 	self.commChannels = {}
+end
+
+function InterruptCoordinator:OnICCommJoinResult(result)
+	glog:debug(dump(result))
 end
 
 -- Send a message on the communication channel.
@@ -841,6 +855,19 @@ function dump(o)
 	else
 		return tostring(o)
 	end
+end
+
+function splitString(inputstr, sep)
+	if sep == nil then
+    	sep = "%s"
+    end
+    local t = {}
+	local i = 1
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+    	t[i] = str
+        i = i + 1
+    end
+    return t
 end
 
 -----------------------------------------------------------------------------------------------
