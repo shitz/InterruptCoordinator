@@ -74,7 +74,8 @@ function InterruptCoordinator:new(o)
     self.__index = self 
 
     -- initialize variables here
-	self.commChannels = {}
+	self.syncChannel = {channel = nil, name = ""}
+	self.broadCastChannel = { channel = nil, name = ""}
 	self.groupLeaderInfo = nil
 	self.partyInterrupts = {}
 	self.currLAS = nil
@@ -274,9 +275,9 @@ function InterruptCoordinator:OnBroadcastTimer()
 		end
 	end
 	if #toSend > 0 then
-		self:SendMsg({type = MsgType.CD_UPDATE, 
-				      senderName = player:GetName(), 
-				      interrupts = toSend})
+		self:SendOnBroadCastChannel({type = MsgType.CD_UPDATE, 
+				      				 senderName = player:GetName(), 
+				      				 interrupts = toSend})
 	end
 end
 
@@ -446,9 +447,9 @@ function InterruptCoordinator:OnDelayedAbilityBookChange()
 	self:UpdateBarsForPlayer(player:GetName(), self.partyInterrupts[player:GetName()], interrupts)
 	self.partyInterrupts[player:GetName()] = interrupts
 	self:LayoutGroupContainer(self.groups[self.playerToGroup[player:GetName()]])
-	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = player:GetName(), 
-				  interrupts = self.partyInterrupts[player:GetName()]})
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+				  	        senderName = player:GetName(), 
+				            interrupts = self.partyInterrupts[player:GetName()]})
 end
 
 -----------------------------------------------------------------------------------------------
@@ -538,17 +539,24 @@ end
 -----------------------------------------------------------------------------------------------
 -- Joins the group channel for inter addon communication.
 function InterruptCoordinator:JoinGroupChannels(leaderName)
-	--if #self.commChannels == kNumOfChannels then return end
-	for i=1,kNumOfChannels do
-		local cname = string.format("IC_%s_%d", leaderName, i)
-		self.commChannels[i] = ICCommLib.JoinChannel(cname, "OnCommMessageReceived", self)
-		glog:debug("Joined channel " .. cname)
+	-- Join the sync channel.
+	local syncName = string.format("IC_sync_%s", leaderName)
+	if self.syncChannel.name ~= syncName then
+		self.syncChannel.name = syncName
+		self.syncChannel.channel = ICCommLib.JoinChannel(syncName, "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. syncName)
+	end
+	-- Join broadcast channel.
+	local bcName = string.format("IC_bc_%s", leaderName)
+	if self.broadCastChannel.name ~= bcName then
+		self.broadCastChannel.name = bcName
+		self.broadCastChannel.channel = ICCommLib.JoinChannel(bcName, "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. bcName)
 	end
 end
 
 -- Leaves the group channel
 function InterruptCoordinator:LeaveGroupChannels()
-	self.commChannels = {}
 end
 
 function InterruptCoordinator:OnICCommJoinResult(result)
@@ -556,12 +564,37 @@ function InterruptCoordinator:OnICCommJoinResult(result)
 end
 
 -- Send a message on the communication channel.
-function InterruptCoordinator:SendMsg(msg)
-	if #self.commChannels == kNumOfChannels then
-		--glog:debug("Send message: " .. dump(msg))
-		local idx = math.random(kNumOfChannels)
-		self.commChannels[idx]:SendMessage(msg)
-		glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
+function InterruptCoordinator:SendOnBroadCastChannel(msg)
+	-- Sanity check for broadcast channel.
+	if self.groupLeaderInfo then
+		local expectedName = string.format("IC_bc_%s", self.groupLeaderInfo.strCharacterName)
+		if self.broadCastChannel.name ~= expectedName then
+			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
+					  "Current: " .. self.broadCastChannel.name .. "\n" ..
+					  "Expected: " .. expectedName)
+			return
+		end
+	end
+	if self.broadCastChannel.channel then
+		self.broadCastChannel.channel:SendMessage(msg)
+		--glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
+	end
+end
+
+function InterruptCoordinator:SendOnSyncChannel(msg)
+	-- Sanity check for sync channel.
+	if self.groupLeaderInfo then
+		local expectedName = string.format("IC_sync_%s", self.groupLeaderInfo.strCharacterName)
+		if self.syncChannel.name ~= expectedName then
+			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
+					  "Current: " .. self.syncChannel.name .. "\n" ..
+					  "Expected: " .. expectedName)
+			return
+		end
+	end
+	if self.syncChannel.channel then
+		self.syncChannel.channel:SendMessage(msg)
+		--glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
 	end
 end
 
@@ -569,34 +602,21 @@ end
 function InterruptCoordinator:SendPlayerInterrupts()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
-	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = player:GetName(), 
-				  interrupts = self.partyInterrupts[player:GetName()]})
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+				            senderName = player:GetName(), 
+				            interrupts = self.partyInterrupts[player:GetName()]})
 end
 
 -- Broadcast a sync request.
 function InterruptCoordinator:SendSyncRequest()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
-	self:SendMsg({type = MsgType.SYNC_REQUEST,
-				  senderName = player:GetName()})
+	self:SendOnSyncChannel({type = MsgType.SYNC_REQUEST,
+				  			senderName = player:GetName()})
 end
 
 -- Main message handling routine.
 function InterruptCoordinator:OnCommMessageReceived(channel, msg)
-	-- Check the channel is currently one of the used ones.
-	local found = false
-	for idx, chan in ipairs(self.commChannels) do
-		if chan == channel then
-			found = true
-			break
-		end
-	end	
-	if not found then
-		glog:debug("Received message on unknown channel.")
-		return
-	end
-	
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
 		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
 		-- Check if this a new player.
