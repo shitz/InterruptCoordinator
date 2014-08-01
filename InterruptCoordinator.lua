@@ -74,7 +74,8 @@ function InterruptCoordinator:new(o)
     self.__index = self 
 
     -- initialize variables here
-	self.commChannels = {}
+	self.syncChannel = {channel = nil, name = ""}
+	self.broadCastChannel = { channel = nil, name = ""}
 	self.groupLeaderInfo = nil
 	self.partyInterrupts = {}
 	self.currLAS = nil
@@ -111,7 +112,6 @@ function InterruptCoordinator:OnLoad()
         appender = "GeminiConsole"
     })
 	self.xmlDoc:RegisterCallback("OnDocLoaded", self)
-	glog:debug("OnLoad")
 end
 
 -----------------------------------------------------------------------------------------------
@@ -138,22 +138,23 @@ function InterruptCoordinator:OnDocLoaded()
 		Apollo.RegisterEventHandler("Group_Join", "OnGroupJoin", self)
 		Apollo.RegisterEventHandler("Group_Left", "OnGroupLeft", self)
 		Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
+		
+		Apollo.RegisterEventHandler("ICCommJoinResult", OnICCommJoinResult, self)
 
 		Apollo.RegisterEventHandler("CombatLogCCState", "OnCombatLogCCState", self)
-		Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
+		--Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
+		--Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 
 		Apollo.RegisterEventHandler("AbilityBookChange", "OnAbilityBookChange", self)
 		Apollo.RegisterTimerHandler("DelayedAbilityBookChange", "OnDelayedAbilityBookChange", self)
 		
 		Apollo.RegisterTimerHandler("DelayedSyncTimer", "OnDelayedSyncTimer", self)
 
-		Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 		
 		Apollo.RegisterTimerHandler("BroadcastTimer", "OnBroadcastTimer", self)
 		Apollo.RegisterTimerHandler("UITimer", "OnUITimer", self)
 		-- Do additional Addon initialization here
 	end
-	glog:debug("OnDocLoaded")
 end
 
 -----------------------------------------------------------------------------------------------
@@ -166,17 +167,27 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 	-- show the window
 	--ints = self:GetCurrentInterrupts()
 	--glog:debug(dump(ints))
-	if arg == "init" then
+	--glog:debug(splitString(arg))
+	args = splitString(arg)
+	if #args < 1 then return end
+	if args[1] == "init" or args[1] == "start" then
 		self:Initialize()
 		self:Show()
-	elseif arg == "reset" then
+	elseif args[1] == "reset" then
 		self:Reset()
-	elseif arg == "show" then
+	elseif args[1] == "show" then
 		self:Show()
-	elseif arg == "hide" then
+	elseif args[1] == "hide" then
 		self:Hide()
-	elseif arg == "sync" then
+	elseif args[1] == "sync" then
 		self:OnGroupJoin()
+	elseif args[1] == "join" then
+		if #args < 2 then
+			print("No channel name provided.")
+			return
+		end
+		ICCommLib.JoinChannel(args[2], "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. args[2])
 	end
 end
 
@@ -258,50 +269,33 @@ function InterruptCoordinator:OnBroadcastTimer()
 		if interrupt.onCD then
 			if interrupt.remainingCD <= 0 then
 				interrupt.remainingCD = 0
-				interrupt.onCD = false
+				--interrupt.onCD = false
 			end
 			table.insert(toSend, interrupt)
 		end
 	end
 	if #toSend > 0 then
-		self:SendMsg({type = MsgType.CD_UPDATE, 
-				      senderName = player:GetName(), 
-				      interrupts = toSend})
-	end
-	
-	-- Update remaining cooldowns.
-	for groupName, group in pairs(self.groups) do
-		for idx, player in ipairs(group.players) do
-			for idx, interrupt in ipairs(player.interrupts) do
-				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
-				-- Only update if remaining cooldown has changed.
-				if int and int.onCD then
-					interrupt.remainingCD = int.remainingCD
-					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD <= 0 then
-						interrupt.remainingCD = 0
-						interrupt.onCD = false
-					else
-						interrupt.onCD = true
-					end
-				end
-			end
-		end
+		self:SendOnBroadCastChannel({type = MsgType.CD_UPDATE, 
+				      				 senderName = player:GetName(), 
+				      				 interrupts = toSend})
 	end
 end
 
 function InterruptCoordinator:OnUITimer()
-	-- Update progress bars.
+	-- Update remaining cooldowns and progress bars.
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
 			for idx, interrupt in ipairs(player.interrupts) do
-				if interrupt.onCD then 
-					interrupt.remainingCD = interrupt.remainingCD - kUIUpdateInterval
+				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
+				if int and int.onCD then
+					int.remainingCD = int.remainingCD - kUIUpdateInterval
 					-- Make sure remainingCD is never < 0.
-					if interrupt.remainingCD <= 0 then
-						interrupt.remainingCD = 0
-						interrupt.onCD = false
+					if int.remainingCD <= 0 then
+						int.remainingCD = 0
+						int.onCD = false
 					end
+					interrupt.remainingCD = int.remainingCD
+					interrupt.onCD = int.onCD
 				end
 				if interrupt.bar:FindChild("ProgressBar") then
 					interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
@@ -387,7 +381,8 @@ function InterruptCoordinator:GetCurrentInterrupts()
 				if spell:GetCooldownRemaining() > 0 then
 					onCD = true
 				end
-				table.insert(interrupts, {spellID = spellID, 
+				table.insert(interrupts, {spellID = spellID,
+										  baseSpellID = spell:GetBaseSpellId(), 
 										  cooldown = spell:GetCooldownTime(), 
 										  remainingCD = spell:GetCooldownRemaining(),
 										  onCD = onCD})
@@ -430,6 +425,14 @@ function InterruptCoordinator:GetPlayerInterruptForSpellID(playerName, spellID)
 	return nil
 end
 
+function InterruptCoordinator:GetPlayerInterruptForBaseSpellID(playerName, baseSpellID)
+	if not self.partyInterrupts[playerName] then return nil end
+	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
+		if interrupt.baseSpellID == baseSpellID then return interrupt end
+	end
+	return nil
+end
+
 function InterruptCoordinator:OnAbilityBookChange()
 	if not self.isInitialized then return end
 	-- We have to delay the update, since at the time this event fires
@@ -444,9 +447,9 @@ function InterruptCoordinator:OnDelayedAbilityBookChange()
 	self:UpdateBarsForPlayer(player:GetName(), self.partyInterrupts[player:GetName()], interrupts)
 	self.partyInterrupts[player:GetName()] = interrupts
 	self:LayoutGroupContainer(self.groups[self.playerToGroup[player:GetName()]])
-	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = player:GetName(), 
-				  interrupts = self.partyInterrupts[player:GetName()]})
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+				  	        senderName = player:GetName(), 
+				            interrupts = self.partyInterrupts[player:GetName()]})
 end
 
 -----------------------------------------------------------------------------------------------
@@ -493,31 +496,105 @@ function InterruptCoordinator:GetGroupLeader()
 end
 
 -----------------------------------------------------------------------------------------------
+-- CombatLogEvent Functions
+-----------------------------------------------------------------------------------------------
+
+function InterruptCoordinator:OnCombatLogCCState(event)
+	if not event.unitCaster or not self.isInitialized then return end
+	--glog:debug(dump(event))
+	glog:debug(event.unitCaster:GetName() .. " used spell " .. event.splCallingSpell:GetName() ..
+			   " (" .. event.splCallingSpell:GetId() .. ")")
+	local spell = GameLib.GetSpell(event.splCallingSpell:GetId())
+	if not spell then return end
+	-- Ignore events of non group members
+	local player = GameLib.GetPlayerUnit()
+	if not player then return end
+	local isLocalPlayer = player:GetName() == event.unitCaster:GetName()
+	if not event.unitCaster:IsInYourGroup() and not isLocalPlayer then 
+		glog:debug("Ignoring combat log event of non-group member.")
+		return 
+	end
+	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), spell:GetBaseSpellId())
+end
+
+function InterruptCoordinator:OnCombatLogInterrupted(event)
+	glog:debug("OnCombatLogInterrupted: " .. dump(event))
+end
+
+function InterruptCoordinator:OnCombatLogModifyInterruptArmor(event)
+	glog:debug("OnCombatLogModifyInterruptArmor: " .. dump(event))
+end
+
+function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, baseSpellID)
+	local interrupt = self:GetPlayerInterruptForBaseSpellID(playerName, baseSpellID)
+	if not interrupt then return end
+	if interrupt.remainingCD < 5 then
+		interrupt.remainingCD = interrupt.cooldown
+		interrupt.onCD = true
+	end
+end
+
+-----------------------------------------------------------------------------------------------
 -- Communication Functions
 -----------------------------------------------------------------------------------------------
 -- Joins the group channel for inter addon communication.
 function InterruptCoordinator:JoinGroupChannels(leaderName)
-	--if #self.commChannels == kNumOfChannels then return end
-	
-	for i=1,kNumOfChannels do
-		local cname = string.format("IC_%s_%d", leaderName, i)
-		self.commChannels[i] = ICCommLib.JoinChannel(cname, "OnCommMessageReceived", self)
-		glog:debug("Joined channel " .. cname)
+	-- Join the sync channel.
+	local syncName = string.format("IC_sync_%s", leaderName)
+	if self.syncChannel.name ~= syncName then
+		self.syncChannel.name = syncName
+		self.syncChannel.channel = ICCommLib.JoinChannel(syncName, "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. syncName)
+	end
+	-- Join broadcast channel.
+	local bcName = string.format("IC_bc_%s", leaderName)
+	if self.broadCastChannel.name ~= bcName then
+		self.broadCastChannel.name = bcName
+		self.broadCastChannel.channel = ICCommLib.JoinChannel(bcName, "OnCommMessageReceived", self)
+		glog:debug("Joined channel " .. bcName)
 	end
 end
 
 -- Leaves the group channel
 function InterruptCoordinator:LeaveGroupChannels()
-	self.commChannels = {}
+end
+
+function InterruptCoordinator:OnICCommJoinResult(result)
+	glog:debug(dump(result))
 end
 
 -- Send a message on the communication channel.
-function InterruptCoordinator:SendMsg(msg)
-	if #self.commChannels == kNumOfChannels then
-		--glog:debug("Send message: " .. dump(msg))
-		local idx = math.random(kNumOfChannels)
-		self.commChannels[idx]:SendMessage(msg)
-		glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
+function InterruptCoordinator:SendOnBroadCastChannel(msg)
+	-- Sanity check for broadcast channel.
+	if self.groupLeaderInfo then
+		local expectedName = string.format("IC_bc_%s", self.groupLeaderInfo.strCharacterName)
+		if self.broadCastChannel.name ~= expectedName then
+			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
+					  "Current: " .. self.broadCastChannel.name .. "\n" ..
+					  "Expected: " .. expectedName)
+			return
+		end
+	end
+	if self.broadCastChannel.channel then
+		self.broadCastChannel.channel:SendMessage(msg)
+		--glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
+	end
+end
+
+function InterruptCoordinator:SendOnSyncChannel(msg)
+	-- Sanity check for sync channel.
+	if self.groupLeaderInfo then
+		local expectedName = string.format("IC_sync_%s", self.groupLeaderInfo.strCharacterName)
+		if self.syncChannel.name ~= expectedName then
+			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
+					  "Current: " .. self.syncChannel.name .. "\n" ..
+					  "Expected: " .. expectedName)
+			return
+		end
+	end
+	if self.syncChannel.channel then
+		self.syncChannel.channel:SendMessage(msg)
+		--glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
 	end
 end
 
@@ -525,34 +602,21 @@ end
 function InterruptCoordinator:SendPlayerInterrupts()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
-	self:SendMsg({type = MsgType.INTERRUPTS_UPDATE, 
-				  senderName = player:GetName(), 
-				  interrupts = self.partyInterrupts[player:GetName()]})
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+				            senderName = player:GetName(), 
+				            interrupts = self.partyInterrupts[player:GetName()]})
 end
 
 -- Broadcast a sync request.
 function InterruptCoordinator:SendSyncRequest()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
-	self:SendMsg({type = MsgType.SYNC_REQUEST,
-				  senderName = player:GetName()})
+	self:SendOnSyncChannel({type = MsgType.SYNC_REQUEST,
+				  			senderName = player:GetName()})
 end
 
 -- Main message handling routine.
 function InterruptCoordinator:OnCommMessageReceived(channel, msg)
-	-- Check the channel is currently one of the used ones.
-	local found = false
-	for idx, chan in ipairs(self.commChannels) do
-		if chan == channel then
-			found = true
-			break
-		end
-	end	
-	if not found then
-		glog:debug("Received message on unknown channel.")
-		return
-	end
-	
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
 		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
 		-- Check if this a new player.
@@ -576,10 +640,12 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 				glog:debug("Received cooldown update for untracked spell.")
 				return
 			end
-			int.remainingCD = interrupt.remainingCD
-			int.onCD = true
-			if int.remainingCD <= 0 then
-				int.remainingCD = 0
+			if not int.onCD or int.remainingCD > interrupt.remainingCD then
+				int.remainingCD = interrupt.remainingCD
+				int.onCD = true
+				if int.remainingCD <= 0 then
+					int.remainingCD = 0
+				end
 			end
 		end
 	elseif msg.type == MsgType.SYNC_REQUEST then
@@ -636,6 +702,7 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 end
 
 function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
+	if not groupName then return end
 	if not self.playerToGroup[playerName] or groupName ~= self.playerToGroup[playerName] then
 		glog:debug(playerName .. " doesn't belong to group '" .. groupName .. "'.")
 		return
@@ -661,7 +728,7 @@ function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
 end
 
 -- Adds a bar for a given interrupt to the player frame.
-function InterruptCoordinator:AddBarToPlayer(playerName, spellID, CD, remainingCD, onCD)
+function InterruptCoordinator:AddBarToPlayer(playerName, spellID, baseSpellID, CD, remainingCD, onCD)
 	local player = self:GetPlayer(playerName)
 	if not player then
 		glog:debug("Tried to add bar to non-existing player!")
@@ -676,6 +743,7 @@ function InterruptCoordinator:AddBarToPlayer(playerName, spellID, CD, remainingC
 	end
 	local interrupt = {}
 	interrupt.spellID = spellID
+	interrupt.baseSpellID = baseSpellID
 	interrupt.cooldown = CD
 	interrupt.remainingCD = remainingCD
 	interrupt.onCD = onCD
@@ -726,7 +794,8 @@ function InterruptCoordinator:UpdateBarsForPlayer(playerName, prevInterrupts, ne
 	if newInterrupts then
 		-- Add progression bar for each interrupt.
 		for idx, interrupt in ipairs(newInterrupts) do
-			self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.cooldown, interrupt.remainingCD, interrupt.onCD) 
+			self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.baseSpellID, 
+			                    interrupt.cooldown, interrupt.remainingCD, interrupt.onCD) 
 		end
 	end
 end
@@ -735,7 +804,7 @@ function InterruptCoordinator:AddPlayerWithInterruptsToGroup(groupName, playerNa
 	self:AddPlayerToGroup(groupName, playerName)
 	-- Add bar for each interrupt currently equipped
 	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
-		self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.cooldown, 
+		self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.baseSpellID, interrupt.cooldown, 
 							interrupt.remainingCD, interrupt.onCD) 
 	end
 
@@ -807,6 +876,19 @@ function dump(o)
 	else
 		return tostring(o)
 	end
+end
+
+function splitString(inputstr, sep)
+	if sep == nil then
+    	sep = "%s"
+    end
+    local t = {}
+	local i = 1
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+    	t[i] = str
+        i = i + 1
+    end
+    return t
 end
 
 -----------------------------------------------------------------------------------------------
