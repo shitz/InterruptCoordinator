@@ -83,7 +83,6 @@ function InterruptCoordinator:new(o)
 	self.playerToGroup = {}
 	self.isInitialized = false
 	self.isVisible = false
-	--self.playerToInterrupts = {}
 	
     return o
 end
@@ -132,14 +131,13 @@ function InterruptCoordinator:OnDocLoaded()
 		--self.xmlDoc = nil
 		
 		-- Register handlers for events, slash commands and timer, etc.
-		-- e.g. Apollo.RegisterEventHandler("KeyDown", "OnKeyDown", self)
 		Apollo.RegisterSlashCommand("ic", "OnInterruptCoordinatorOn", self)
 		
 		Apollo.RegisterEventHandler("Group_Join", "OnGroupJoin", self)
 		Apollo.RegisterEventHandler("Group_Left", "OnGroupLeft", self)
 		Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
 		
-		Apollo.RegisterEventHandler("ICCommJoinResult", OnICCommJoinResult, self)
+		Apollo.RegisterEventHandler("ICCommJoinResult", "OnICCommJoinResult", self)
 
 		Apollo.RegisterEventHandler("CombatLogCCState", "OnCombatLogCCState", self)
 		--Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
@@ -164,10 +162,6 @@ end
 
 -- on SlashCommand "/ic"
 function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
-	-- show the window
-	--ints = self:GetCurrentInterrupts()
-	--glog:debug(dump(ints))
-	--glog:debug(splitString(arg))
 	args = splitString(arg)
 	if #args < 1 then return end
 	if args[1] == "init" or args[1] == "start" then
@@ -269,7 +263,6 @@ function InterruptCoordinator:OnBroadcastTimer()
 		if interrupt.onCD then
 			if interrupt.remainingCD <= 0 then
 				interrupt.remainingCD = 0
-				--interrupt.onCD = false
 			end
 			table.insert(toSend, interrupt)
 		end
