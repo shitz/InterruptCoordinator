@@ -170,7 +170,7 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 	--glog:debug(splitString(arg))
 	args = splitString(arg)
 	if #args < 1 then return end
-	if args[1] == "init" then
+	if args[1] == "init" or args[1] == "start" then
 		self:Initialize()
 		self:Show()
 	elseif args[1] == "reset" then
@@ -702,6 +702,7 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 end
 
 function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
+	if not groupName then return end
 	if not self.playerToGroup[playerName] or groupName ~= self.playerToGroup[playerName] then
 		glog:debug(playerName .. " doesn't belong to group '" .. groupName .. "'.")
 		return
