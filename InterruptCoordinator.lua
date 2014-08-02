@@ -44,11 +44,9 @@ local Interrupts = {
 	[18547] = 32320, -- Flash Bang
 	-- Medic
 	[26543] = 42352, -- paralytic surge
-
 }
 
 local MsgType = {
-	--SLOTTED_INTERRUPTS = 1,
 	INTERRUPTS_UPDATE = 1,
 	CD_UPDATE = 2,
 	SYNC_REQUEST = 3,
@@ -266,7 +264,7 @@ function InterruptCoordinator:OnBroadcastTimer()
 			end
 			if self:ShouldPeriodicallyBroadcastCDs() or 
 			   interrupt.remainingCD == 0 or
-			   setContains(newlyStarted, interrupt.spellID) then
+			   setContains(newlyStarted, interrupt.ID) then
 				table.insert(toSend, interrupt)
 			end
 		end
@@ -283,7 +281,7 @@ function InterruptCoordinator:OnUITimer()
 	for groupName, group in pairs(self.groups) do
 		for idx, player in ipairs(group.players) do
 			for idx, interrupt in ipairs(player.interrupts) do
-				local int = self:GetPlayerInterruptForSpellID(player.name, interrupt.spellID)
+				local int = self:GetPlayerInterruptForID(player.name, interrupt.ID)
 				if int and int.onCD then
 					int.remainingCD = int.remainingCD - kUIUpdateInterval
 					-- Make sure remainingCD is never < 0.
@@ -378,8 +376,8 @@ function InterruptCoordinator:GetCurrentInterrupts()
 				if spell:GetCooldownRemaining() > 0 then
 					onCD = true
 				end
-				table.insert(interrupts, {spellID = spellID,
-										  baseSpellID = spell:GetBaseSpellId(), 
+				table.insert(interrupts, {ID = ID,
+										  spellID = spellID,
 										  cooldown = spell:GetCooldownTime(), 
 										  remainingCD = spell:GetCooldownRemaining(),
 										  onCD = onCD})
@@ -401,7 +399,7 @@ function InterruptCoordinator:UpdateRemainingCDForCurrentInterrupts()
 		interrupt.remainingCD = spell:GetCooldownRemaining()
 		if interrupt.remainingCD > 0 and not interrupt.onCD then 
 			interrupt.onCD = true
-			addToSet(newlyStarted, interrupt.spellID)
+			addToSet(newlyStarted, interrupt.ID)
 		end
 	end
 	
@@ -419,20 +417,25 @@ function InterruptCoordinator:GetTieredSpellIDFromAbilityID(ID)
 	return sSpellId
 end
 
-function InterruptCoordinator:GetPlayerInterruptForSpellID(playerName, spellID)
+function InterruptCoordinator:GetPlayerInterruptForID(playerName, ID)
 	if not self.partyInterrupts[playerName] then return nil end
 	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
-		if interrupt.spellID == spellID then return interrupt end
+		if interrupt.ID == ID then return interrupt end
 	end
 	return nil
 end
 
-function InterruptCoordinator:GetPlayerInterruptForBaseSpellID(playerName, baseSpellID)
-	if not self.partyInterrupts[playerName] then return nil end
-	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
-		if interrupt.baseSpellID == baseSpellID then return interrupt end
+function InterruptCoordinator:GetAbilityIDForName(name)
+	local abilities = AbilityBook.GetAbilitiesList()
+	if not abilities then
+		return 0 
 	end
-	return nil
+	for _, v in pairs(abilities) do
+		if v.strName == name then
+			return v.nId;
+		end
+	end
+	return 0
 end
 
 function InterruptCoordinator:OnAbilityBookChange()
@@ -515,11 +518,6 @@ end
 
 function InterruptCoordinator:OnCombatLogCCState(event)
 	if not event.unitCaster or not self.isInitialized then return end
-	--glog:debug(dump(event))
-	glog:debug(event.unitCaster:GetName() .. " used spell " .. event.splCallingSpell:GetName() ..
-			   " (" .. event.splCallingSpell:GetId() .. ")")
-	local spell = GameLib.GetSpell(event.splCallingSpell:GetId())
-	if not spell then return end
 	-- Ignore events of non group members
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
@@ -528,7 +526,7 @@ function InterruptCoordinator:OnCombatLogCCState(event)
 		glog:debug("Ignoring combat log event of non-group member.")
 		return 
 	end
-	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), spell)
+	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), event.splCallingSpell)
 end
 
 function InterruptCoordinator:OnCombatLogInterrupted(event)
@@ -540,11 +538,13 @@ function InterruptCoordinator:OnCombatLogModifyInterruptArmor(event)
 end
 
 function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, spell)
-	local interrupt = self:GetPlayerInterruptForBaseSpellID(playerName, spell:GetBaseSpellId())
+	local ID = self:GetAbilityIDForName(spell:GetName())
+	if not ID or not Interrupts[ID] then return end
+	local interrupt = self:GetPlayerInterruptForID(playerName, ID)
 	-- If we haven't seen this interrupt yet we add it to the list of known interrupts.
 	if not interrupt then
-		interrupt = {spellID = spell:GetId(),
-		    	     baseSpellID = spell:GetBaseSpellId(),
+		interrupt = {ID = ID,
+					 spellID = spell:GetId(),
 				     cooldown = spell:GetCooldownTime(),
 					 remainingCD = spell:GetCooldownRemaining(),
 					 onCD = true}
@@ -662,20 +662,16 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	elseif msg.type == MsgType.CD_UPDATE then
 		-- Update remaining cooldowns.
 		for idx, interrupt in ipairs(msg.interrupts) do
-			glog:debug("Received CD_UPDATE from " .. msg.senderName .. " for spell " .. tostring(interrupt.spellID) ..
+			glog:debug("Received CD_UPDATE from " .. msg.senderName .. " for spell " .. tostring(interrupt.ID) ..
 				   	   ". Remaining CD: " .. interrupt.remainingCD .. " s.")
-			local int = self:GetPlayerInterruptForSpellID(msg.senderName, interrupt.spellID)
-			-- If we picked up the spell from the combat log then the spellID could be different.
-			-- Try to get it with basespell ID.
+			local int = self:GetPlayerInterruptForID(msg.senderName, interrupt.ID)
 			if not int then
-				int = self:GetPlayerInterruptForBaseSpellID(msg.senderName, interrupt.baseSpellID)
-				if not int then
-					glog:debug("Received CD update for untracked spell.")
-					return
-				end
-				-- Update spell with broadcast values.
+				glog:debug("Received CD update for untracked spell.")
+				return
+			end
+			-- Update spell id from broadcast if necessary.
+			if int.spellID ~= interrupt.spellID then
 				int.spellID = interrupt.spellID
-				int.cooldown = interrupt.cooldown
 			end
 			if not int.onCD or int.remainingCD > interrupt.remainingCD then
 				int.remainingCD = interrupt.remainingCD
@@ -787,14 +783,14 @@ function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	end
 	-- Make sure we only have one bar for each interrupt.
 	for k, v in pairs(player.interrupts) do
-		if v.spellID and (v.spellID == spellID or v.baseSpellID == baseSpellID) then
-			glog:debug("Bar for this interrupt (" .. spellID .. ") already exists.")
+		if v.ID and v.ID == newInterrupt.ID then
+			glog:debug("Bar for this interrupt (" .. newInterrupt.ID .. ") already exists.")
 			return
 		end
 	end
 	local interrupt = {}
+	interrupt.ID = newInterrupt.ID
 	interrupt.spellID = newInterrupt.spellID
-	interrupt.baseSpellID = newInterrupt.baseSpellID
 	interrupt.cooldown = newInterrupt.cooldown
 	interrupt.remainingCD = newInterrupt.remainingCD
 	interrupt.onCD = newInterrupt.onCD
@@ -804,10 +800,10 @@ function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
 	interrupt.bar:FindChild("Icon"):Show(true)
 	table.insert(player.interrupts, interrupt)
-	glog:debug("Added interrupt " .. newInterrupt.spellID .. " to player " .. playerName)
+	glog:debug("Added interrupt " .. newInterrupt.ID .. " to player " .. playerName)
 end
 
-function InterruptCoordinator:RemoveBarFromPlayer(playerName, spellID)
+function InterruptCoordinator:RemoveBarFromPlayer(playerName, ID)
 	local player = self:GetPlayer(playerName)
 	if not player then
 		glog:debug("Tried to remove bar from non-existing player!")
@@ -818,16 +814,16 @@ function InterruptCoordinator:RemoveBarFromPlayer(playerName, spellID)
 	local idx = 0
 	for _, v in ipairs(player.interrupts) do
 		idx = idx + 1
-		if v.spellID and v.spellID == spellID then
+		if v.ID and v.ID == ID then
 			interrupt = v
 			break
 		end
 	end
 	if not interrupt then 
-		glog:debug("Tried to remove bar for non existing interrupt " .. tostring(spellID) .. " from " .. playerName)
+		glog:debug("Tried to remove bar for non existing interrupt " .. tostring(ID) .. " from " .. playerName)
 		return
 	end
-	glog:debug("Remove interrupt " .. tostring(spellID) .. " from player " .. playerName)
+	glog:debug("Remove interrupt " .. tostring(ID) .. " from player " .. playerName)
 	-- Destroy bar.
 	interrupt.bar:Destroy()
 	-- Remove interrupt.
@@ -838,7 +834,7 @@ function InterruptCoordinator:UpdateBarsForPlayer(playerName, prevInterrupts, ne
 	if prevInterrupts then
 		-- Remove bar for all previous Interrupts.
 		for idx, interrupt in ipairs(prevInterrupts) do
-			self:RemoveBarFromPlayer(playerName, interrupt.spellID)
+			self:RemoveBarFromPlayer(playerName, interrupt.ID)
 		end
 	end
 			
