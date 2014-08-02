@@ -46,6 +46,45 @@ local Interrupts = {
 	[26543] = 42352, -- paralytic surge
 }
 
+local InterruptNamesToAbilityIDs = {
+	-- Spellslinger
+	["Gate"] = 20325,
+	["Arcane Shock"] = 30160,
+	["Spatial Shift"] = 16454,
+	["Pforte"] = 20325,
+	["Arkanstoß"] = 30160,
+	["Raumverschiebung"] = 16454,
+	-- Esper
+	["Crush"] = 19022,
+	["Shockwave"] = 19029,
+	["Incapacitate"] = 19255,
+	["Zermalmen"] = 19022,
+	["Schockwelle"] = 19029,
+	["Lahmlegen"] = 19255,
+	-- Stalker
+	["Stagger"] = 23173,
+	["Collapse"] = 23705,
+	["False Retreat"] = 23587,
+	["Links-Rechts-Kombination"] = 23173,
+	["Kleinkriegen"] = 23705,
+	["Rückzugsfinte"] = 23587,
+	-- Engineer
+	["Zap"] = 25635,
+	["Obstruct Vision"] = 34176,
+	["Schocken "] = 25635,
+	["Sicht behindern"] = 34176,
+	-- Warrior
+	["Kick"] = 38017,
+	["Grapple"] = 18363,
+	["Flash Bang"] = 18547,
+	["Tritt"] = 38017,
+	["Einhaken"] = 18363,
+	["Blendgranate"] = 18547,
+	-- Medic
+	["Paralytic Surge"] = 26543,
+	["Hochspannungslähmung"] = 26543,
+}
+
 local MsgType = {
 	INTERRUPTS_UPDATE = 1,
 	CD_UPDATE = 2,
@@ -439,6 +478,22 @@ function InterruptCoordinator:GetAbilityIDForName(name)
 	return 0
 end
 
+function InterruptCoordinator:GetCooldownForSpell(spellId)
+	local spell = GameLib.GetSpell(spellId)
+	local spellName = spell:GetName()
+	if spell:GetCooldownTime() and spell:GetCooldownTime() > 0 then 
+		return spell:GetCooldownTime() 
+	end 
+	-- life is not always that easy lets try to get spell cooldown from our 
+	-- known interrupt abilities by name matching
+	for abilityId, spellIdForBaseTier in pairs(Interrupts) do
+		local tmpSpell = GameLib.GetSpell(spellIdForBaseTier )
+		if tmpSpell:GetName() == spellName then
+			return tmpSpell:GetCooldownTime() 		
+		end
+	end
+end
+
 function InterruptCoordinator:OnAbilityBookChange()
 	if not self.isInitialized then return end
 	-- We have to delay the update, since at the time this event fires
@@ -527,6 +582,7 @@ function InterruptCoordinator:OnCombatLogCCState(event)
 		glog:debug("Ignoring combat log event of non-group member.")
 		return 
 	end
+	glog:debug(event.unitCaster:GetName() .. " uses " .. event.splCallingSpell:GetName())
 	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), event.splCallingSpell)
 end
 
@@ -539,23 +595,29 @@ function InterruptCoordinator:OnCombatLogModifyInterruptArmor(event)
 end
 
 function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, spell)
-	local ID = self:GetAbilityIDForName(spell:GetName())
+	local ID = InterruptNamesToAbilityIDs[spell:GetName()]
+	glog:debug(tostring(ID))
 	if not ID or not Interrupts[ID] then return end
 	local interrupt = self:GetPlayerInterruptForID(playerName, ID)
 	-- If we haven't seen this interrupt yet we add it to the list of known interrupts.
 	if not interrupt then
+		glog:debug(string.format("Add spell from combat log. ID %d, CD %d", spell:GetId(), spell:GetCooldownTime()))
 		interrupt = {ID = ID,
 					 spellID = spell:GetId(),
-				     cooldown = spell:GetCooldownTime(),
-					 remainingCD = spell:GetCooldownRemaining(),
+				     cooldown = self:GetCooldownForSpell(spell:GetId()),
+					 remainingCD = self:GetCooldownForSpell(spell:GetId()),		 
 					 onCD = true}
 		-- Add interrupt party interrupts.
+		if not self.partyInterrupts[playerName] then
+			self.partyInterrupts[playerName] = {}
+		end
 		table.insert(self.partyInterrupts[playerName], interrupt)
 		-- Check if we ever recorded this player before.
 		if not self.playerToGroup[playerName] then
 			self:AddPlayerToGroup(kDefaultGroup, playerName)
 		end
 		self:AddBarToPlayer(playerName, interrupt)
+		self:LayoutGroupContainer(self.groups[self.playerToGroup[playerName]])
 	elseif interrupt.remainingCD < 5 then
 		interrupt.remainingCD = interrupt.cooldown
 		interrupt.onCD = true
