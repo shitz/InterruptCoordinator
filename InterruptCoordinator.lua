@@ -217,7 +217,8 @@ function InterruptCoordinator:Reset()
 		group.container:Destroy()
 	end
 	
-	self.commsChannel = {}
+	self.syncChannel = {channel = nil, name = ""}
+	self.broadCastChannel = { channel = nil, name = ""}
 	self.groupLeaderInfo = nil
 	self.currentInterrupts = {}
 	self.partyInterrupts = {}
