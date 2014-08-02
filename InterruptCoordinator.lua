@@ -708,7 +708,10 @@ end
 -- Main message handling routine.
 function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	-- Ignore messages of non group members.
-	if not self:IsInGroup(msg.SenderName) then return end
+	if not self:IsInGroup(msg.senderName) then 
+		glog:debug("Ignoring message from non-group member " .. msg.senderName)
+		return 
+	end
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
 		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
 		-- Check if this a new player.
