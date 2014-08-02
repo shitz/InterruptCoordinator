@@ -106,7 +106,7 @@ function InterruptCoordinator:OnLoad()
 	-- Setup Gemini Logging
     GeminiLogging = Apollo.GetPackage("Gemini:Logging-1.2").tPackage
 	glog = GeminiLogging:GetLogger({
-        level = GeminiLogging.INFO,
+        level = GeminiLogging.DEBUG,
         pattern = "%d %n %c %l - %m",
         appender = "GeminiConsole"
     })
@@ -255,7 +255,7 @@ end
 
 function InterruptCoordinator:OnBroadcastTimer()
 	-- Check if the remaing cd of some interrupt has changed and if yes, let everyone know.
-	self:UpdateRemainingCDForCurrentInterrupts()
+	local newlyStarted = self:UpdateRemainingCDForCurrentInterrupts()
 	local toSend = {}
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
@@ -264,7 +264,11 @@ function InterruptCoordinator:OnBroadcastTimer()
 			if interrupt.remainingCD <= 0 then
 				interrupt.remainingCD = 0
 			end
-			table.insert(toSend, interrupt)
+			if self:ShouldPeriodicallyBroadcastCDs() or 
+			   interrupt.remainingCD == 0 or
+			   setContains(newlyStarted, interrupt.spellID) then
+				table.insert(toSend, interrupt)
+			end
 		end
 	end
 	if #toSend > 0 then
@@ -386,17 +390,22 @@ function InterruptCoordinator:GetCurrentInterrupts()
 	return interrupts
 end
 
--- Updates remaining cooldowns for currently slotted interrupts
+-- Updates remaining cooldowns for currently slotted interrupts and returns
+-- the ones that are newly started.
 function InterruptCoordinator:UpdateRemainingCDForCurrentInterrupts()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
+	local newlyStarted = {}
 	for idx, interrupt in ipairs(self.partyInterrupts[player:GetName()]) do
 		spell = GameLib.GetSpell(interrupt.spellID)
 		interrupt.remainingCD = spell:GetCooldownRemaining()
-		if interrupt.remainingCD > 0 then 
+		if interrupt.remainingCD > 0 and not interrupt.onCD then 
 			interrupt.onCD = true
+			addToSet(newlyStarted, interrupt.spellID)
 		end
 	end
+	
+	return newlyStarted
 end
 
 -- utility function that gets the spellId from abilityId
@@ -488,6 +497,18 @@ function InterruptCoordinator:GetGroupLeader()
 	return leaderInfo
 end
 
+-- Checks if a given player belongs to your group.
+function InterruptCoordinator:IsInGroup(playerName)
+	local n = GroupLib.GetMemberCount()
+	for i=1, n do
+		local info = GroupLib.GetGroupMember(i)
+		if info.strCharacterName == playerName then
+			return true
+		end
+	end
+	
+	return false
+end
 -----------------------------------------------------------------------------------------------
 -- CombatLogEvent Functions
 -----------------------------------------------------------------------------------------------
@@ -507,7 +528,7 @@ function InterruptCoordinator:OnCombatLogCCState(event)
 		glog:debug("Ignoring combat log event of non-group member.")
 		return 
 	end
-	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), spell:GetBaseSpellId())
+	self:UpdateInterruptFromCombatLogEvent(event.unitCaster:GetName(), spell)
 end
 
 function InterruptCoordinator:OnCombatLogInterrupted(event)
@@ -518,10 +539,23 @@ function InterruptCoordinator:OnCombatLogModifyInterruptArmor(event)
 	glog:debug("OnCombatLogModifyInterruptArmor: " .. dump(event))
 end
 
-function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, baseSpellID)
-	local interrupt = self:GetPlayerInterruptForBaseSpellID(playerName, baseSpellID)
-	if not interrupt then return end
-	if interrupt.remainingCD < 5 then
+function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, spell)
+	local interrupt = self:GetPlayerInterruptForBaseSpellID(playerName, spell:GetBaseSpellId())
+	-- If we haven't seen this interrupt yet we add it to the list of known interrupts.
+	if not interrupt then
+		interrupt = {spellID = spell:GetId(),
+		    	     baseSpellID = spell:GetBaseSpellId(),
+				     cooldown = spell:GetCooldownTime(),
+					 remainingCD = spell:GetCooldownRemaining(),
+					 onCD = true}
+		-- Add interrupt party interrupts.
+		table.insert(self.partyInterrupts[playerName], interrupt)
+		-- Check if we ever recorded this player before.
+		if not self.playerToGroup[playerName] then
+			self:AddPlayerToGroup(kDefaultGroup, playerName)
+		end
+		self:AddBarToPlayer(playerName, interrupt)
+	elseif interrupt.remainingCD < 5 then
 		interrupt.remainingCD = interrupt.cooldown
 		interrupt.onCD = true
 	end
@@ -610,6 +644,8 @@ end
 
 -- Main message handling routine.
 function InterruptCoordinator:OnCommMessageReceived(channel, msg)
+	-- Ignore messages of non group members.
+	if not self:IsInGroup(msg.SenderName) then return end
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
 		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
 		-- Check if this a new player.
@@ -629,9 +665,17 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 			glog:debug("Received CD_UPDATE from " .. msg.senderName .. " for spell " .. tostring(interrupt.spellID) ..
 				   	   ". Remaining CD: " .. interrupt.remainingCD .. " s.")
 			local int = self:GetPlayerInterruptForSpellID(msg.senderName, interrupt.spellID)
+			-- If we picked up the spell from the combat log then the spellID could be different.
+			-- Try to get it with basespell ID.
 			if not int then
-				glog:debug("Received cooldown update for untracked spell.")
-				return
+				int = self:GetPlayerInterruptForBaseSpellID(msg.senderName, interrupt.baseSpellID)
+				if not int then
+					glog:debug("Received CD update for untracked spell.")
+					return
+				end
+				-- Update spell with broadcast values.
+				int.spellID = interrupt.spellID
+				int.cooldown = interrupt.cooldown
 			end
 			if not int.onCD or int.remainingCD > interrupt.remainingCD then
 				int.remainingCD = interrupt.remainingCD
@@ -648,6 +692,19 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	end
 end
 
+-- Only the classes with dynamic cooldown reducing effects (SS, Medic, Esper) will periodically
+-- broadcast their remaining cooldowns (to save bandwith on the comm channel).
+function InterruptCoordinator:ShouldPeriodicallyBroadcastCDs()
+	local player = GameLib.GetPlayerUnit()
+	if not player then return false end
+	if player:GetClassId() == GameLib.CodeEnumClass.Spellslinger or
+	   player:GetClassId() == GameLib.CodeEnumClass.Medic or
+	   player:GetClassId() == GameLib.CodeEnumClass.Esper then
+		return true
+	else
+		return false
+	end
+end
 -----------------------------------------------------------------------------------------------
 -- GUI builders
 -----------------------------------------------------------------------------------------------
@@ -716,12 +773,13 @@ function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
 		return
 	end
 	glog:debug("Remove player " .. playerName .. " from group " .. groupName)
+	self.playerToGroup[playerName] = nil
 	player.container:Destroy()
 	table.remove(group.players, idx)
 end
 
 -- Adds a bar for a given interrupt to the player frame.
-function InterruptCoordinator:AddBarToPlayer(playerName, spellID, baseSpellID, CD, remainingCD, onCD)
+function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	local player = self:GetPlayer(playerName)
 	if not player then
 		glog:debug("Tried to add bar to non-existing player!")
@@ -729,24 +787,24 @@ function InterruptCoordinator:AddBarToPlayer(playerName, spellID, baseSpellID, C
 	end
 	-- Make sure we only have one bar for each interrupt.
 	for k, v in pairs(player.interrupts) do
-		if v.spellID and v.spellID == spellID then
+		if v.spellID and (v.spellID == spellID or v.baseSpellID == baseSpellID) then
 			glog:debug("Bar for this interrupt (" .. spellID .. ") already exists.")
 			return
 		end
 	end
 	local interrupt = {}
-	interrupt.spellID = spellID
-	interrupt.baseSpellID = baseSpellID
-	interrupt.cooldown = CD
-	interrupt.remainingCD = remainingCD
-	interrupt.onCD = onCD
+	interrupt.spellID = newInterrupt.spellID
+	interrupt.baseSpellID = newInterrupt.baseSpellID
+	interrupt.cooldown = newInterrupt.cooldown
+	interrupt.remainingCD = newInterrupt.remainingCD
+	interrupt.onCD = newInterrupt.onCD
 	interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
-	interrupt.bar:FindChild("ProgressBar"):SetMax(CD)
-	interrupt.bar:FindChild("ProgressBar"):SetProgress(remainingCD)
-	interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(spellID):GetIcon())
+	interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
+	interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
+	interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
 	interrupt.bar:FindChild("Icon"):Show(true)
 	table.insert(player.interrupts, interrupt)
-	glog:debug("Added interrupt " .. spellID .. " to player " .. playerName)
+	glog:debug("Added interrupt " .. newInterrupt.spellID .. " to player " .. playerName)
 end
 
 function InterruptCoordinator:RemoveBarFromPlayer(playerName, spellID)
@@ -787,8 +845,7 @@ function InterruptCoordinator:UpdateBarsForPlayer(playerName, prevInterrupts, ne
 	if newInterrupts then
 		-- Add progression bar for each interrupt.
 		for idx, interrupt in ipairs(newInterrupts) do
-			self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.baseSpellID, 
-			                    interrupt.cooldown, interrupt.remainingCD, interrupt.onCD) 
+			self:AddBarToPlayer(playerName, interrupt) 
 		end
 	end
 end
@@ -797,8 +854,7 @@ function InterruptCoordinator:AddPlayerWithInterruptsToGroup(groupName, playerNa
 	self:AddPlayerToGroup(groupName, playerName)
 	-- Add bar for each interrupt currently equipped
 	for idx, interrupt in ipairs(self.partyInterrupts[playerName]) do
-		self:AddBarToPlayer(playerName, interrupt.spellID, interrupt.baseSpellID, interrupt.cooldown, 
-							interrupt.remainingCD, interrupt.onCD) 
+		self:AddBarToPlayer(playerName, interrupt) 
 	end
 
 end
@@ -882,6 +938,18 @@ function splitString(inputstr, sep)
         i = i + 1
     end
     return t
+end
+
+function addToSet(set, key)
+    set[key] = true
+end
+
+function removeFromSet(set, key)
+    set[key] = nil
+end
+
+function setContains(set, key)
+    return set[key] ~= nil
 end
 
 -----------------------------------------------------------------------------------------------
