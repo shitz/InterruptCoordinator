@@ -280,7 +280,7 @@ function InterruptCoordinator:Reset()
 	self.partyInterrupts = {}
 	self.currLAS = nil
 	self.groups = {}
-	self.playerToGroup = {}
+	self.players = {}
 	
 	self.isInitialized = false
 	self.isVisible = false
@@ -984,7 +984,7 @@ function InterruptCoordinator:LayoutGroupContainer(group)
 	-- We first call LayoutPlayerContainer for each player of the group
 	-- and use the returned totalHeights to layout the group container.
 	local totalHeight = 15
-	for idx, player in ipairs(group.players) do
+	for idx, player in spairs(group.players, sortByName) do
 		local height = self:LayoutPlayerContainer(player)
 		local l, t, r, b = player.container:GetAnchorOffsets()
 		player.container:SetAnchorOffsets(l, totalHeight, r, totalHeight + height)
@@ -1005,7 +1005,7 @@ function InterruptCoordinator:LayoutPlayerContainer(player)
 	
 	-- Layout interrupt bars.
 	local voffset = kPlayerNameHeight + kVerticalBarPadding
-	for idx, interrupt in ipairs(player.interrupts) do
+	for idx, interrupt in spairs(player.interrupts, sortByID) do
 		l, t, r, b = interrupt.bar:GetAnchorOffsets()
 		interrupt.bar:SetAnchorOffsets(l, voffset, r, voffset + kBarHeight)
 		voffset = voffset + kBarHeight + kVerticalBarPadding
@@ -1069,6 +1069,38 @@ end
 
 function setContains(set, key)
     return set[key] ~= nil
+end
+
+-- Iterates over table in a given order (sorted by keys per default)
+function spairs(t, order)
+    -- collect the keys
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+
+    -- if order function given, sort by it by passing the table and keys a, b,
+    -- otherwise just sort the keys 
+    if order then
+        table.sort(keys, function(a,b) return order(t, a, b) end)
+    else
+        table.sort(keys)
+    end
+
+    -- return the iterator function
+    local i = 0
+    return function()
+        i = i + 1
+        if keys[i] then
+            return keys[i], t[keys[i]]
+        end
+    end
+end
+
+function sortByName(t, a, b)
+	return t[a].name < t[b].name
+end
+
+function sortByID(t, a, b)
+	return t[a].ID < t[b].ID
 end
 
 -----------------------------------------------------------------------------------------------
