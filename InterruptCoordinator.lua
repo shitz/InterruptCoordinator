@@ -115,9 +115,9 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.3.1"
-local kVersion = 301
-local kMinVersion = 300
+local kVersionString = "0.4"
+local kVersion = 400
+local kMinVersion = 301
 -----------------------------------------------------------------------------------------------
 -- Initialization
 -----------------------------------------------------------------------------------------------
