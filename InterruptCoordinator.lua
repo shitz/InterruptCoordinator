@@ -102,6 +102,21 @@ local kUIUpdateInterval = 0.033
 local kBroadcastInterval = 1
 
 local kNumOfChannels = 3
+
+local function hexToCColor(color, a)
+	if not a then a = 1 end
+	local r = tonumber(string.sub(color,1,2), 16) / 255
+	local g = tonumber(string.sub(color,3,4), 16) / 255
+	local b = tonumber(string.sub(color,5,6), 16) / 255
+	return CColor.new(r,g,b,a)
+end
+
+local kProgressBarBGColorEnabled = hexToCColor("069e0a")
+local kProgressBarBGColorDisabled = "darkgray"
+
+local kVersionString = "0.3.1"
+local kVersion = 301
+local kMinVersion = 300
 -----------------------------------------------------------------------------------------------
 -- Initialization
 -----------------------------------------------------------------------------------------------
@@ -177,6 +192,8 @@ function InterruptCoordinator:OnDocLoaded()
 		Apollo.RegisterEventHandler("ICCommJoinResult", "OnICCommJoinResult", self)
 
 		Apollo.RegisterEventHandler("CombatLogCCState", "OnCombatLogCCState", self)
+		--Apollo.RegisterEventHandler("CombatLogDeath", "OnCombatLogDeath", self)
+		--Apollo.RegisterEventHandler("CombatLogRessurect", "OnCombatLogRessurect", self)
 		--Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
 		--Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 
@@ -310,9 +327,42 @@ function InterruptCoordinator:OnBroadcastTimer()
 		end
 	end
 	if #toSend > 0 then
-		self:SendOnBroadCastChannel({type = MsgType.CD_UPDATE, 
+		self:SendOnBroadCastChannel({type = MsgType.CD_UPDATE,
+									 version = kVersion,
 				      				 senderName = player:GetName(), 
 				      				 interrupts = toSend})
+	end
+	
+	-- Check if someone of the group is dead.
+	local n = GroupLib.GetMemberCount()
+	if n == 0 then
+		local player = GameLib.GetPlayerUnit()
+		if not player then return end
+		local playerContainer = self:GetPlayer(player:GetName())
+		for _, interrupt in ipairs(playerContainer.interrupts) do
+			if player:IsDead() then
+				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
+			else
+				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
+			end
+			interrupt.bar:FindChild("DisabledOverlay"):Show(player:IsDead())
+		end
+	else
+		for i=1, n do
+			local info = GroupLib.GetGroupMember(i)
+			if not info then return end
+			local isDead = info.nHealth == 0 and info.nHealthMax ~= 0
+			local player = self:GetPlayer(info.strCharacterName)
+			if not player then return end
+			for _, interrupt in ipairs(player.interrupts) do
+				if isDead then
+					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
+				else
+					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
+				end
+				interrupt.bar:FindChild("DisabledOverlay"):Show(isDead)
+			end
+		end
 	end
 end
 
@@ -508,7 +558,8 @@ function InterruptCoordinator:OnDelayedAbilityBookChange()
 	self:UpdateBarsForPlayer(player:GetName(), self.partyInterrupts[player:GetName()], interrupts)
 	self.partyInterrupts[player:GetName()] = interrupts
 	self:LayoutGroupContainer(self.groups[self.playerToGroup[player:GetName()]])
-	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE,
+							version = kVersion,
 				  	        senderName = player:GetName(), 
 				            interrupts = self.partyInterrupts[player:GetName()]})
 end
@@ -692,7 +743,8 @@ end
 function InterruptCoordinator:SendPlayerInterrupts()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
-	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE, 
+	self:SendOnSyncChannel({type = MsgType.INTERRUPTS_UPDATE,
+							version = kVersion, 
 				            senderName = player:GetName(), 
 				            interrupts = self.partyInterrupts[player:GetName()]})
 end
@@ -702,6 +754,7 @@ function InterruptCoordinator:SendSyncRequest()
 	local player = GameLib.GetPlayerUnit()
 	if not player then return end
 	self:SendOnSyncChannel({type = MsgType.SYNC_REQUEST,
+							version = kVersion,
 				  			senderName = player:GetName()})
 end
 
@@ -711,6 +764,10 @@ function InterruptCoordinator:OnCommMessageReceived(channel, msg)
 	if not self:IsInGroup(msg.senderName) then 
 		glog:debug("Ignoring message from non-group member " .. msg.senderName)
 		return 
+	end
+	if not msg.version or msg.version < kMinVersion then
+		glog:info("Ignoring message from " .. msg.senderName .. ". Addon version too old.")
+		return
 	end
 	if msg.type == MsgType.INTERRUPTS_UPDATE then
 		glog:debug("Received interrupts update from " .. msg.senderName .. ":\n" .. dump(msg.interrupts))
@@ -958,7 +1015,7 @@ end
 
 function InterruptCoordinator:GetPlayer(playerName)
 	if not self.playerToGroup[playerName] then
-		glog:debug(playerName .. " is not in a group yet.")
+		--glog:debug(playerName .. " is not in a group yet.")
 		return
 	end
 	local group = self.groups[self.playerToGroup[playerName]]
