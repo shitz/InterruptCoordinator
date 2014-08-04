@@ -95,6 +95,7 @@ local kBarHeight = 25
 local kPlayerNameHeight = 18
 local kVerticalBarPadding = 0
 local kVerticalPlayerPadding = 0
+local kGroupContainerWidth = 164
 
 local kDefaultGroup = "Main"
 
@@ -274,13 +275,13 @@ function InterruptCoordinator:Reset()
 	end
 	
 	self.syncChannel = {channel = nil, name = ""}
-	self.broadCastChannel = { channel = nil, name = ""}
+	self.broadCastChannel = {channel = nil, name = ""}
 	self.groupLeaderInfo = nil
 	self.currentInterrupts = {}
 	self.partyInterrupts = {}
 	self.currLAS = nil
 	self.groups = {}
-	self.playerToGroup = {}
+	self.players = {}
 	
 	self.isInitialized = false
 	self.isVisible = false
@@ -470,6 +471,7 @@ function InterruptCoordinator:GetCurrentInterrupts()
 										  spellID = spellID,
 										  cooldown = spell:GetCooldownTime(), 
 										  remainingCD = spell:GetCooldownRemaining(),
+										  IAremoved = self:GetIARemovedForSpell(ID, spellID),
 										  onCD = onCD})
 			end
 		end
@@ -542,6 +544,20 @@ function InterruptCoordinator:GetCooldownForSpell(spellId)
 			return tmpSpell:GetCooldownTime() 		
 		end
 	end
+end
+
+function InterruptCoordinator:GetIARemovedForSpell(abilityID, spellID)
+	local IAremoved = 1
+	local spell = GameLib.GetSpell(spellID)
+	if not spell then return IAremoved end
+	if abilityID == InterruptNamesToAbilityIDs["Gate"] and spell:GetTier() > 4 or
+	   abilityID == InterruptNamesToAbilityIDs["Crush"] and spell:GetTier() > 4 or
+	   abilityID == InterruptNamesToAbilityIDs["Zap"] and spell:GetTier() > 4 or
+	   abilityID == InterruptNamesToAbilityIDs["Kick"] and spell:GetTier() > 8 or
+	   abilityID == InterruptNamesToAbilityIDs["Paralytic Surge"] and spell:GetTier() > 4 then
+		IAremoved = 2
+	end
+	return IAremoved
 end
 
 function InterruptCoordinator:OnAbilityBookChange()
@@ -656,7 +672,8 @@ function InterruptCoordinator:UpdateInterruptFromCombatLogEvent(playerName, spel
 		interrupt = {ID = ID,
 					 spellID = spell:GetId(),
 				     cooldown = self:GetCooldownForSpell(spell:GetId()),
-					 remainingCD = self:GetCooldownForSpell(spell:GetId()),		 
+					 remainingCD = self:GetCooldownForSpell(spell:GetId()),
+					 IAremoved = self:GetIARemovedForSpell(ID, spell:GetId()),	 
 					 onCD = true}
 		-- Add interrupt party interrupts.
 		if not self.partyInterrupts[playerName] then
@@ -840,7 +857,7 @@ function InterruptCoordinator:NewGroup(groupName)
 	group.container:SetData({groupName = groupName})
 	if self.saveData then
 		group.container:SetAnchorOffsets(self.saveData.left, self.saveData.top,
-										 self.saveData.right, self.saveData.bottom)
+										 self.saveData.left + kGroupContainerWidth, self.saveData.bottom)
 	end
 	group.players = {}
 	self.groups[groupName] = group
@@ -916,12 +933,15 @@ function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	interrupt.spellID = newInterrupt.spellID
 	interrupt.cooldown = newInterrupt.cooldown
 	interrupt.remainingCD = newInterrupt.remainingCD
+	interrupt.IAremoved = newInterrupt.IAremoved
 	interrupt.onCD = newInterrupt.onCD
 	interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
 	interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
 	interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
 	interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
 	interrupt.bar:FindChild("Icon"):Show(true)
+	interrupt.bar:FindChild("IARemovedIcon"):SetText(newInterrupt.IAremoved)
+	interrupt.bar:FindChild("IARemovedIcon"):Show(true)
 	table.insert(player.interrupts, interrupt)
 	glog:debug("Added interrupt " .. newInterrupt.ID .. " to player " .. playerName)
 end
@@ -984,7 +1004,7 @@ function InterruptCoordinator:LayoutGroupContainer(group)
 	-- We first call LayoutPlayerContainer for each player of the group
 	-- and use the returned totalHeights to layout the group container.
 	local totalHeight = 15
-	for idx, player in ipairs(group.players) do
+	for idx, player in spairs(group.players, sortByName) do
 		local height = self:LayoutPlayerContainer(player)
 		local l, t, r, b = player.container:GetAnchorOffsets()
 		player.container:SetAnchorOffsets(l, totalHeight, r, totalHeight + height)
@@ -1005,7 +1025,7 @@ function InterruptCoordinator:LayoutPlayerContainer(player)
 	
 	-- Layout interrupt bars.
 	local voffset = kPlayerNameHeight + kVerticalBarPadding
-	for idx, interrupt in ipairs(player.interrupts) do
+	for idx, interrupt in spairs(player.interrupts, sortByID) do
 		l, t, r, b = interrupt.bar:GetAnchorOffsets()
 		interrupt.bar:SetAnchorOffsets(l, voffset, r, voffset + kBarHeight)
 		voffset = voffset + kBarHeight + kVerticalBarPadding
@@ -1069,6 +1089,38 @@ end
 
 function setContains(set, key)
     return set[key] ~= nil
+end
+
+-- Iterates over table in a given order (sorted by keys per default)
+function spairs(t, order)
+    -- collect the keys
+    local keys = {}
+    for k in pairs(t) do keys[#keys+1] = k end
+
+    -- if order function given, sort by it by passing the table and keys a, b,
+    -- otherwise just sort the keys 
+    if order then
+        table.sort(keys, function(a,b) return order(t, a, b) end)
+    else
+        table.sort(keys)
+    end
+
+    -- return the iterator function
+    local i = 0
+    return function()
+        i = i + 1
+        if keys[i] then
+            return keys[i], t[keys[i]]
+        end
+    end
+end
+
+function sortByName(t, a, b)
+	return t[a].name < t[b].name
+end
+
+function sortByID(t, a, b)
+	return t[a].ID < t[b].ID
 end
 
 -----------------------------------------------------------------------------------------------
