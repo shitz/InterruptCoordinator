@@ -115,8 +115,8 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.4"
-local kVersion = 400
+local kVersionString = "0.4.1"
+local kVersion = 401
 local kMinVersion = 301
 -----------------------------------------------------------------------------------------------
 -- Initialization
@@ -135,7 +135,6 @@ function InterruptCoordinator:new(o)
 	self.groups = {}
 	self.playerToGroup = {}
 	self.isInitialized = false
-	self.isVisible = false
 	
     return o
 end
@@ -284,28 +283,25 @@ function InterruptCoordinator:Reset()
 	self.players = {}
 	
 	self.isInitialized = false
-	self.isVisible = false
 end
 
 function InterruptCoordinator:Show()
-	if self.isInitialized and not self.isVisible then
+	if self.isInitialized then
 		-- Start UI timer.
 		Apollo.StartTimer("UITimer")
 		for name, group in pairs(self.groups) do
 			group.container:Show(true)
 		end
-		self.isVisible = true
 	end
 end
 
 function InterruptCoordinator:Hide()
-	if self.isInitialized and self.isVisible then
+	if self.isInitialized then
 		-- Stop UI timer.
-		Apollo.StartTimer("UITimer")
+		Apollo.StopTimer("UITimer")
 		for name, group in pairs(self.groups) do
 			group.container:Show(false, true)
 		end
-		self.isVisible = false	
 	end
 end
 
