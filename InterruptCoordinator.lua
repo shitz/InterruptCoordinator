@@ -945,7 +945,9 @@ function InterruptCoordinator:NewGroup(groupName)
 	--table.insert(group.columns, Apollo.LoadForm(self.xmlDoc, "Column", group.container, self))
 	if self.saveData then
 		local l, t, r, b = group.container:GetAnchorOffsets()
-		group.container:SetAnchorOffsets(self.saveData.groupLeft, self.saveData.groupTop, r, b)
+		l = self.saveData.groupLeft and self.saveData.groupLeft or l
+		t = self.saveData.groupTop and self.saveData.groupTop or t
+		group.container:SetAnchorOffsets(l, t, r, b)
 	end
 	group.players = {}
 	self.groups[groupName] = group
