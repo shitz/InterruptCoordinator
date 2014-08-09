@@ -91,11 +91,24 @@ local MsgType = {
 	SYNC_REQUEST = 3,
 }
 
+local kUsageString = "'/ic help' - Displays this help\n" .. 
+					 "'/ic config' - Shows configuration options\n" ..
+					 "'/ic start' - Starts InterruptCoordinator\n" ..
+					 "'/ic init' - Same as /ic start\n" ..
+					 "'/ic reset' - Resets InterruptCoordinator\n" ..
+					 "'/ic show|hide' - Shows|hides the main window\n" ..
+					 "'/ic sync' - Tries to sync with the rest of the group/raid\n" ..
+					 "'/ic join <channel>' - Manually joins channel with the name <channel>"
 local kBarHeight = 25
 local kPlayerNameHeight = 18
-local kVerticalBarPadding = 0
-local kVerticalPlayerPadding = 0
-local kGroupContainerWidth = 164
+local kVerticalBarPadding = 1
+local kVerticalPlayerPadding = 1
+local kColumnWidth = 174
+local kHorizontalColumnPadding = 2
+local kMinimalPlayerContainerHeight = 25
+
+local kConfigFormWidth = 330
+local kConfigFormHeight = 320
 
 local kDefaultGroup = "Main"
 
@@ -115,8 +128,8 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.4.1"
-local kVersion = 401
+local kVersionString = "0.5"
+local kVersion = 500
 local kMinVersion = 301
 -----------------------------------------------------------------------------------------------
 -- Initialization
@@ -127,6 +140,9 @@ function InterruptCoordinator:new(o)
     self.__index = self 
 
     -- initialize variables here
+	self.configForm = nil
+	self.saveData = {}
+
 	self.syncChannel = {channel = nil, name = ""}
 	self.broadCastChannel = { channel = nil, name = ""}
 	self.groupLeaderInfo = nil
@@ -135,13 +151,16 @@ function InterruptCoordinator:new(o)
 	self.groups = {}
 	self.playerToGroup = {}
 	self.isInitialized = false
+	self.isGroupWindowVisible = false
+	self.useMinimalUI = true
+	self.playersPerColumn = 10
 	
     return o
 end
 
 function InterruptCoordinator:Init()
 	local bHasConfigureFunction = false
-	local strConfigureButtonText = ""
+	local strConfigureButtonText = "InterruptCoordinator"
 	local tDependencies = {
 		"Gemini:Logging-1.2"
 	}
@@ -158,7 +177,7 @@ function InterruptCoordinator:OnLoad()
 	-- Setup Gemini Logging
     GeminiLogging = Apollo.GetPackage("Gemini:Logging-1.2").tPackage
 	glog = GeminiLogging:GetLogger({
-        level = GeminiLogging.INFO,
+        level = GeminiLogging.DEBUG,
         pattern = "%d %n %c %l - %m",
         appender = "GeminiConsole"
     })
@@ -171,20 +190,25 @@ end
 function InterruptCoordinator:OnDocLoaded()
 
 	if self.xmlDoc ~= nil and self.xmlDoc:IsLoaded() then
-	    self.wndMain = Apollo.LoadForm(self.xmlDoc, "InterruptCoordinatorForm", nil, self)
-		if self.wndMain == nil then
+	    self.configForm = Apollo.LoadForm(self.xmlDoc, "ConfigForm", nil, self)
+		local l = self.saveData.configLeft and self.saveData.configLeft or 50
+		local t = self.saveData.configTop and self.saveData.configTop or 100
+		self.configForm:SetAnchorOffsets(l, t, l + kConfigFormWidth, t + kConfigFormHeight)
+		if self.configForm == nil then
 			Apollo.AddAddonErrorText(self, "Could not load the main window for some reason.")
 			return
 		end
 		
-	    self.wndMain:Show(false, true)
+	    self.configForm:Show(false, true)
 
 		-- if the xmlDoc is no longer needed, you should set it to nil
 		--self.xmlDoc = nil
 		
 		-- Register handlers for events, slash commands and timer, etc.
 		Apollo.RegisterSlashCommand("ic", "OnInterruptCoordinatorOn", self)
-		
+		Apollo.RegisterEventHandler("InterfaceMenuListHasLoaded", "OnInterfaceMenuListHasLoaded", self)
+		Apollo.RegisterEventHandler("LoadICConfigForm", "LoadConfigForm", self)
+
 		Apollo.RegisterEventHandler("Group_Join", "OnGroupJoin", self)
 		Apollo.RegisterEventHandler("Group_Left", "OnGroupLeft", self)
 		Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
@@ -217,8 +241,7 @@ end
 -- on SlashCommand "/ic"
 function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 	args = splitString(arg)
-	if #args < 1 then return end
-	if args[1] == "init" or args[1] == "start" then
+	if #args < 1 or args[1] == "init" or args[1] == "start" then
 		self:Initialize()
 		self:Show()
 	elseif args[1] == "reset" then
@@ -229,6 +252,10 @@ function InterruptCoordinator:OnInterruptCoordinatorOn(cmd, arg)
 		self:Hide()
 	elseif args[1] == "sync" then
 		self:OnGroupJoin()
+	elseif args[1] == "config" then
+		self:LoadConfigForm()
+	elseif args[1] == "help" then
+		glog:info(kUsageString)
 	elseif args[1] == "join" then
 		if #args < 2 then
 			print("No channel name provided.")
@@ -272,7 +299,7 @@ function InterruptCoordinator:Reset()
 		group.container:DestroyChildren()
 		group.container:Destroy()
 	end
-	
+		
 	self.syncChannel = {channel = nil, name = ""}
 	self.broadCastChannel = {channel = nil, name = ""}
 	self.groupLeaderInfo = nil
@@ -281,7 +308,7 @@ function InterruptCoordinator:Reset()
 	self.currLAS = nil
 	self.groups = {}
 	self.players = {}
-	
+
 	self.isInitialized = false
 end
 
@@ -292,6 +319,7 @@ function InterruptCoordinator:Show()
 		for name, group in pairs(self.groups) do
 			group.container:Show(true)
 		end
+		self.isGroupWindowVisible = true
 	end
 end
 
@@ -302,6 +330,7 @@ function InterruptCoordinator:Hide()
 		for name, group in pairs(self.groups) do
 			group.container:Show(false, true)
 		end
+		self.isGroupWindowVisible = false
 	end
 end
 
@@ -331,33 +360,35 @@ function InterruptCoordinator:OnBroadcastTimer()
 	end
 	
 	-- Check if someone of the group is dead.
-	local n = GroupLib.GetMemberCount()
-	if n == 0 then
-		local player = GameLib.GetPlayerUnit()
-		if not player then return end
-		local playerContainer = self:GetPlayer(player:GetName())
-		for _, interrupt in ipairs(playerContainer.interrupts) do
-			if player:IsDead() then
-				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
-			else
-				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
-			end
-			interrupt.bar:FindChild("DisabledOverlay"):Show(player:IsDead())
-		end
-	else
-		for i=1, n do
-			local info = GroupLib.GetGroupMember(i)
-			if not info then return end
-			local isDead = info.nHealth == 0 and info.nHealthMax ~= 0
-			local player = self:GetPlayer(info.strCharacterName)
+	if not self.useMinimalUI then
+		local n = GroupLib.GetMemberCount()
+		if n == 0 then
+			local player = GameLib.GetPlayerUnit()
 			if not player then return end
-			for _, interrupt in ipairs(player.interrupts) do
-				if isDead then
+			local playerContainer = self:GetPlayer(player:GetName())
+			for _, interrupt in ipairs(playerContainer.interrupts) do
+				if player:IsDead() then
 					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
 				else
 					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
 				end
-				interrupt.bar:FindChild("DisabledOverlay"):Show(isDead)
+				interrupt.bar:FindChild("DisabledOverlay"):Show(player:IsDead())
+			end
+		else
+			for i=1, n do
+				local info = GroupLib.GetGroupMember(i)
+				if not info then return end
+				local isDead = info.nHealth == 0 and info.nHealthMax ~= 0
+				local player = self:GetPlayer(info.strCharacterName)
+				if not player then return end
+				for _, interrupt in ipairs(player.interrupts) do
+					if isDead then
+						interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
+					else
+						interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
+					end
+					interrupt.bar:FindChild("DisabledOverlay"):Show(isDead)
+				end
 			end
 		end
 	end
@@ -381,6 +412,13 @@ function InterruptCoordinator:OnUITimer()
 				end
 				if interrupt.bar:FindChild("ProgressBar") then
 					interrupt.bar:FindChild("ProgressBar"):SetProgress(interrupt.remainingCD)
+					if self.useMinimalUI then
+						if interrupt.onCD == false then
+							interrupt.bar:FindChild("ProgressBar"):RemoveStyleEx("UseValues")
+						else
+							interrupt.bar:FindChild("ProgressBar"):AddStyleEx("UseValues")
+						end
+					end
 				end
 			end
 		end
@@ -393,17 +431,64 @@ function InterruptCoordinator:OnDelayedSyncTimer()
 	self:SendSyncRequest()
 	self:SendPlayerInterrupts()
 end
+
+function InterruptCoordinator:OnInterfaceMenuListHasLoaded()
+	Event_FireGenericEvent(
+		"InterfaceMenuList_NewAddOn", 
+		"InterruptCoordinator", 
+		{
+			"LoadICConfigForm", 
+			"", 
+			""}
+		)
+end
+
 -----------------------------------------------------------------------------------------------
--- InterruptCoordinatorForm Functions
+-- ConfigForm Functions
 -----------------------------------------------------------------------------------------------
+function InterruptCoordinator:LoadConfigForm()
+	self.configForm:FindChild("MinimalUICheckbox"):SetCheck(self.useMinimalUI)
+	self.tmpUseMinimalUI = self.useMinimalUI
+	local spinner = self.configForm:FindChild("PlayersPerColumnContainer"):FindChild("Frame"):FindChild("Spinner")
+	self.tmpPlayersPerColumn = self.playersPerColumn
+	spinner:SetMinMax(1, 20)
+	spinner:SetValue(self.playersPerColumn)
+	self.configForm:Invoke()
+end
 -- when the OK button is clicked
-function InterruptCoordinator:OnOK()
-	self.wndMain:Close() -- hide the window
+function InterruptCoordinator:OnSaveButtonPressed()
+	local needsRebuild = false
+	if self.tmpPlayersPerColumn ~= self.playersPerColumn then
+		self.playersPerColumn = self.tmpPlayersPerColumn
+		needsRebuild = true
+	end
+	if self.tmpUseMinimalUI ~= self.useMinimalUI then
+		self.useMinimalUI = self.tmpUseMinimalUI
+		needsRebuild = true
+	end
+	self.configForm:Close() -- hide the window
+	if self.isGroupWindowVisible then
+		if needsRebuild then
+			self:RebuildUI()
+		end
+	end
 end
 
 -- when the Cancel button is clicked
-function InterruptCoordinator:OnCancel()
-	self.wndMain:Close() -- hide the window
+function InterruptCoordinator:OnCancelButtonPressed()
+	self.configForm:Close() -- hide the window
+end
+
+function InterruptCoordinator:OnUseMinimalUIChecked()
+	self.tmpUseMinimalUI = true
+end
+
+function InterruptCoordinator:OnUseMinimalUIUnchecked()
+	self.tmpUseMinimalUI = false
+end
+
+function InterruptCoordinator:OnPlayersPerColumnCountChanged(wndHandler, wndControl)
+	self.tmpPlayersPerColumn = wndControl:GetValue()
 end
 
 function InterruptCoordinator:OnHideGroupContainerButtonPressed(wHandler)
@@ -436,12 +521,17 @@ function InterruptCoordinator:OnSave(level)
 
 	-- Create table to hold our save data.
 	local saveData = {}
-	saveData.left, saveData.top, saveData.right, saveData.bottom = self.groups[kDefaultGroup].container:GetAnchorOffsets()
+	saveData.groupLeft, saveData.groupTop, _, _ = self.groups[kDefaultGroup].container:GetAnchorOffsets()
+	saveData.configLeft, saveData.configTop, _, _ = self.configForm:GetAnchorOffsets()
+	saveData.useMinimalUI = self.useMinimalUI
+	saveData.playersPerColumn = self.playersPerColumn
 	return saveData
 end
 
 function InterruptCoordinator:OnRestore(level, data)
 	self.saveData = data
+	self.playersPerColumn = data.playersPerColumn and data.playersPerColumn or 10
+	self.useMinimalUI = data.useMinimalUI and data.useMinimalUI or false
 end
 -----------------------------------------------------------------------------------------------
 -- LAS Functions
@@ -849,11 +939,13 @@ function InterruptCoordinator:NewGroup(groupName)
 		return 
 	end
 	local group = {}
-	group.container = Apollo.LoadForm(self.xmlDoc, "GroupContainer", nil, self)
-	group.container:SetData({groupName = groupName})
+	group.columns = {}
+	group.groupName = groupName
+	group.container = Apollo.LoadForm(self.xmlDoc, "MinimalGroupContainer", nil, self)
+	--table.insert(group.columns, Apollo.LoadForm(self.xmlDoc, "Column", group.container, self))
 	if self.saveData then
-		group.container:SetAnchorOffsets(self.saveData.left, self.saveData.top,
-										 self.saveData.left + kGroupContainerWidth, self.saveData.bottom)
+		local l, t, r, b = group.container:GetAnchorOffsets()
+		group.container:SetAnchorOffsets(self.saveData.groupLeft, self.saveData.groupTop, r, b)
 	end
 	group.players = {}
 	self.groups[groupName] = group
@@ -873,13 +965,23 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 	end
 	
 	self.playerToGroup[playerName] = groupName
-	--local n = #self.groups[groupName].members
+	local group = self.groups[groupName]
 	local player = {}
 	player.name = playerName
-	player.container = Apollo.LoadForm(self.xmlDoc, "PlayerContainer", self.groups[groupName].container, self)
+	-- Add a column if necessary.
+	if #group.players >= #group.columns * self.playersPerColumn then
+		glog:debug("Adding new column.")
+		table.insert(group.columns, Apollo.LoadForm(self.xmlDoc, "Column", group.container:FindChild("Columns"), self))
+	end
+	-- Use minimal UI when in Raid or set as preference.
+	if self.useMinimalUI then
+		player.container = Apollo.LoadForm(self.xmlDoc, "MinimalPlayerContainer", group.columns[#group.columns], self)
+	else	
+		player.container = Apollo.LoadForm(self.xmlDoc, "PlayerContainer", group.columns[#group.columns], self)
+	end
 	player.container:FindChild("PlayerName"):SetText(playerName)
 	player.interrupts = {}
-	table.insert(self.groups[groupName].players, player)
+	table.insert(group.players, player)
 	glog:debug("Added " .. playerName .. "to group " .. groupName)
 end
 
@@ -908,6 +1010,11 @@ function InterruptCoordinator:RemovePlayerFromGroup(groupName, playerName)
 	self.playerToGroup[playerName] = nil
 	player.container:Destroy()
 	table.remove(group.players, idx)
+	-- Remove column if necessary.
+	if #group.players <= (#group.columns - 1) * self.playersPerColumn then
+		local column = table.remove(group.columns)
+		column:Destroy()
+	end
 end
 
 -- Adds a bar for a given interrupt to the player frame.
@@ -931,13 +1038,22 @@ function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	interrupt.remainingCD = newInterrupt.remainingCD
 	interrupt.IAremoved = newInterrupt.IAremoved
 	interrupt.onCD = newInterrupt.onCD
-	interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
-	interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
-	interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
-	interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
-	interrupt.bar:FindChild("Icon"):Show(true)
-	interrupt.bar:FindChild("IARemovedIcon"):SetText(newInterrupt.IAremoved)
-	interrupt.bar:FindChild("IARemovedIcon"):Show(true)
+	-- Use minimal UI when in raid.
+	if self.useMinimalUI then
+		interrupt.bar = Apollo.LoadForm(self.xmlDoc, "IconContainer", player.container:FindChild("Icons"), self)
+		interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
+		interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
+		interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
+		interrupt.bar:FindChild("Icon"):Show(true)
+	else
+		interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
+		interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
+		interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
+		interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
+		interrupt.bar:FindChild("Icon"):Show(true)
+		interrupt.bar:FindChild("IARemovedIcon"):SetText(newInterrupt.IAremoved)
+		interrupt.bar:FindChild("IARemovedIcon"):Show(true)
+	end
 	table.insert(player.interrupts, interrupt)
 	glog:debug("Added interrupt " .. newInterrupt.ID .. " to player " .. playerName)
 end
@@ -997,36 +1113,102 @@ end
 -- Layout Group container.
 function InterruptCoordinator:LayoutGroupContainer(group)
 	if not group then return end
-	-- We first call LayoutPlayerContainer for each player of the group
-	-- and use the returned totalHeights to layout the group container.
-	local totalHeight = 15
-	for idx, player in spairs(group.players, sortByName) do
+	-- We first call LayoutPlayerContainer for each player of the group.
+	local cnt = 1
+	local maxTotalHeight = 0
+	local totalHeight = 0
+	for _, player in spairs(group.players, sortByName) do
 		local height = self:LayoutPlayerContainer(player)
-		local l, t, r, b = player.container:GetAnchorOffsets()
-		player.container:SetAnchorOffsets(l, totalHeight, r, totalHeight + height)
+		--local l, t, r, b = player.container:GetAnchorOffsets()
+		--player.container:SetAnchorOffsets(l, totalHeight, r, totalHeight + height)
 		totalHeight = totalHeight + kVerticalPlayerPadding + height
+		if totalHeight > maxTotalHeight then
+			maxTotalHeight = totalHeight
+		end
+		-- Reset cnt and totalHeight if we start a new column.
+		if cnt == self.playersPerColumn then
+			cnt = 0
+			totalHeight = 0
+		end	
 	end
-	-- Set height of group container to totalHeight
-	local l, t, r, b = group.container:GetAnchorOffsets()
-	group.container:SetAnchorOffsets(l, t, r, t + totalHeight)
+	-- Layout columns
+	for _, column in ipairs(group.columns) do
+		local l, t, r, b = column:GetAnchorOffsets()
+		column:SetAnchorOffsets(l, t, r, t + maxTotalHeight)
+		column:ArrangeChildrenVert(0)
+	end
+
+	-- Set group columns dimensions.
+	local width = #group.columns * kColumnWidth + (#group.columns - 1) * kHorizontalColumnPadding
+	glog:debug(string.format("In LayoutGroupContainer: w = %d, h = %d", width, maxTotalHeight))
+	local columnsContainer = group.container:FindChild("Columns")
+	if not columnsContainer then return end
+	local l, t, r, b = columnsContainer:GetAnchorOffsets()
+	columnsContainer:SetAnchorOffsets(l, t, l + width, t + maxTotalHeight)
+	-- Horizontally align columns
+	columnsContainer:ArrangeChildrenHorz(0)
+	-- Set container dimensions
+	l, t, r, b = group.container:GetAnchorOffsets()
+	group.container:SetAnchorOffsets(l, t, l + width, t + maxTotalHeight + 20)
 end
 
 -- Layout Player container.
 function InterruptCoordinator:LayoutPlayerContainer(player)
 	local ninterrupts = #player.interrupts
-	-- Set total height to be kPlayerNameHeight  + ninterrupts * (kBarHeight + kVerticalPadding)
-	local totalHeight = kPlayerNameHeight + ninterrupts * (kBarHeight + kVerticalBarPadding)
-	local l, t, r, b = player.container:GetAnchorOffsets()
-	player.container:SetAnchorOffsets(l, t, r, totalHeight)
-	
-	-- Layout interrupt bars.
-	local voffset = kPlayerNameHeight + kVerticalBarPadding
-	for idx, interrupt in spairs(player.interrupts, sortByID) do
-		l, t, r, b = interrupt.bar:GetAnchorOffsets()
-		interrupt.bar:SetAnchorOffsets(l, voffset, r, voffset + kBarHeight)
-		voffset = voffset + kBarHeight + kVerticalBarPadding
-	end 
+	local totalHeight = 0
+	-- Use minimal UI if in Raid or set in preferences.
+	if self.useMinimalUI then
+		--local l, t, r, b = player.container:GetAnchorOffsets()
+		local icons = player.container:FindChild("Icons")
+		if not icons then return end
+		icons:ArrangeChildrenHorz(2)
+		totalHeight = kMinimalPlayerContainerHeight
+	else
+		-- Set total height to be kPlayerNameHeight  + ninterrupts * (kBarHeight + kVerticalPadding)
+		totalHeight = kPlayerNameHeight + ninterrupts * (kBarHeight + kVerticalBarPadding)
+		local l, t, r, b = player.container:GetAnchorOffsets()
+		player.container:SetAnchorOffsets(l, t, r, totalHeight)
+		
+		-- Layout interrupt bars.
+		local voffset = kPlayerNameHeight + kVerticalBarPadding
+		for idx, interrupt in spairs(player.interrupts, sortByID) do
+			l, t, r, b = interrupt.bar:GetAnchorOffsets()
+			interrupt.bar:SetAnchorOffsets(l, voffset, r, voffset + kBarHeight)
+			voffset = voffset + kBarHeight + kVerticalBarPadding
+		end
+	end
 	return totalHeight
+end
+
+function InterruptCoordinator:RebuildUI()
+	Apollo.StopTimer("BroadcastTimer")
+	Apollo.StopTimer("UITimer")
+	for name, interrupts in pairs(self.partyInterrupts) do
+		self:RemovePlayerFromGroup(self.playerToGroup[name], name)
+	end
+	self.playerToGroup = {}
+	for name, interrupts in pairs(self.partyInterrupts) do
+		self:AddPlayerWithInterruptsToGroup(kDefaultGroup, name)
+	end
+	-- Layout GroupWindow
+	self:LayoutGroupContainer(self.groups[kDefaultGroup])
+	Apollo.StartTimer("BroadcastTimer")
+	Apollo.StartTimer("UITimer")
+end
+
+-- Returns the column index given a player index.
+function InterruptCoordinator:MaxColumnHeight(columns)
+	local maxHeight = 0
+	for _, column in ipairs(columns) do
+		local l, t, r, b = column:GetAnchorOffsets()
+		local pl, pt, pr, pb = column:GetAnchorPoints()
+		glog:debug(string.format("Column offsets: l=%d, t=%d, r=%d, b=%d", l, t, r, b))
+		glog:debug(string.format("Column anchors: l=%d, t=%d, r=%d, b=%d", pl, pt, pr, pb))
+ 		if b - t > maxHeight then 
+			maxHeight = b - t
+		end
+	end
+	return maxHeight
 end
 
 function InterruptCoordinator:GetPlayer(playerName)
