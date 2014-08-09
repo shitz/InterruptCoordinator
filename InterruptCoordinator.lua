@@ -128,8 +128,8 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.5"
-local kVersion = 500
+local kVersionString = "0.5.1"
+local kVersion = 501
 local kMinVersion = 301
 -----------------------------------------------------------------------------------------------
 -- Initialization
@@ -177,7 +177,7 @@ function InterruptCoordinator:OnLoad()
 	-- Setup Gemini Logging
     GeminiLogging = Apollo.GetPackage("Gemini:Logging-1.2").tPackage
 	glog = GeminiLogging:GetLogger({
-        level = GeminiLogging.INFO,
+        level = GeminiLogging.DEBUG,
         pattern = "%d %n %c %l - %m",
         appender = "GeminiConsole"
     })
@@ -211,7 +211,8 @@ function InterruptCoordinator:OnDocLoaded()
 
 		Apollo.RegisterEventHandler("Group_Join", "OnGroupJoin", self)
 		Apollo.RegisterEventHandler("Group_Left", "OnGroupLeft", self)
-		Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
+		--Apollo.RegisterEventHandler("Group_Updated", "OnGroupUpdated", self)
+		Apollo.RegisterEventHandler("Group_Remove", "OnGroupRemoved", self)
 		
 		Apollo.RegisterEventHandler("ICCommJoinResult", "OnICCommJoinResult", self)
 
@@ -292,9 +293,7 @@ end
 function InterruptCoordinator:Reset()
 	Apollo.StopTimer("BroadcastTimer")
 	Apollo.StopTimer("UITimer")
-	
-	self:LeaveGroupChannels()
-	
+		
 	for name, group in pairs(self.groups) do
 		group.container:DestroyChildren()
 		group.container:Destroy()
@@ -303,13 +302,12 @@ function InterruptCoordinator:Reset()
 	self.syncChannel = {channel = nil, name = ""}
 	self.broadCastChannel = {channel = nil, name = ""}
 	self.groupLeaderInfo = nil
-	self.currentInterrupts = {}
 	self.partyInterrupts = {}
 	self.currLAS = nil
 	self.groups = {}
-	self.players = {}
-
+	self.playerToGroup = {}
 	self.isInitialized = false
+	self.isGroupWindowVisible = false
 end
 
 function InterruptCoordinator:Show()
@@ -332,6 +330,7 @@ function InterruptCoordinator:Hide()
 		end
 		self.isGroupWindowVisible = false
 	end
+	--self:Reset()
 end
 
 function InterruptCoordinator:OnBroadcastTimer()
@@ -360,36 +359,17 @@ function InterruptCoordinator:OnBroadcastTimer()
 	end
 	
 	-- Check if someone of the group is dead.
-	if not self.useMinimalUI then
-		local n = GroupLib.GetMemberCount()
-		if n == 0 then
-			local player = GameLib.GetPlayerUnit()
-			if not player then return end
-			local playerContainer = self:GetPlayer(player:GetName())
-			for _, interrupt in ipairs(playerContainer.interrupts) do
-				if player:IsDead() then
-					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
-				else
-					interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
-				end
-				interrupt.bar:FindChild("DisabledOverlay"):Show(player:IsDead())
-			end
-		else
-			for i=1, n do
-				local info = GroupLib.GetGroupMember(i)
-				if not info then return end
-				local isDead = info.nHealth == 0 and info.nHealthMax ~= 0
-				local player = self:GetPlayer(info.strCharacterName)
-				if not player then return end
-				for _, interrupt in ipairs(player.interrupts) do
-					if isDead then
-						interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
-					else
-						interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
-					end
-					interrupt.bar:FindChild("DisabledOverlay"):Show(isDead)
-				end
-			end
+	local n = GroupLib.GetMemberCount()
+	if n == 0 then
+		local player = GameLib.GetPlayerUnit()
+		if not player then return end
+		self:SetPlayerDisabled(player:GetName(), player:IsDead())
+	else
+		for i=1, n do
+			local info = GroupLib.GetGroupMember(i)
+			if not info then return end
+			local isDead = info.nHealth == 0 and info.nHealthMax ~= 0
+			self:SetPlayerDisabled(info.strCharacterName, isDead)
 		end
 	end
 end
@@ -692,7 +672,18 @@ function InterruptCoordinator:OnGroupJoin()
 end
 
 function InterruptCoordinator:OnGroupLeft()
-	self:Reset()
+	--self:Reset()
+	if GroupLib.InGroup() then
+		glog:debug("LeftGroup: Still in group!")
+	else
+		self:Reset()
+	end
+end
+
+function InterruptCoordinator:OnGroupRemoved(name)
+	if not self.playerToGroup[name] then return end
+	self:RemovePlayerFromGroup(self.playerToGroup[name], name)
+	self:RebuildUI()
 end
 
 function InterruptCoordinator:GetGroupLeader()
@@ -942,7 +933,6 @@ function InterruptCoordinator:NewGroup(groupName)
 	group.columns = {}
 	group.groupName = groupName
 	group.container = Apollo.LoadForm(self.xmlDoc, "MinimalGroupContainer", nil, self)
-	--table.insert(group.columns, Apollo.LoadForm(self.xmlDoc, "Column", group.container, self))
 	if self.saveData then
 		local l, t, r, b = group.container:GetAnchorOffsets()
 		l = self.saveData.groupLeft and self.saveData.groupLeft or l
@@ -1162,7 +1152,7 @@ function InterruptCoordinator:LayoutPlayerContainer(player)
 	if self.useMinimalUI then
 		--local l, t, r, b = player.container:GetAnchorOffsets()
 		local icons = player.container:FindChild("Icons")
-		if not icons then return end
+		if not icons then return 0 end
 		icons:ArrangeChildrenHorz(2)
 		totalHeight = kMinimalPlayerContainerHeight
 	else
@@ -1198,19 +1188,21 @@ function InterruptCoordinator:RebuildUI()
 	Apollo.StartTimer("UITimer")
 end
 
--- Returns the column index given a player index.
-function InterruptCoordinator:MaxColumnHeight(columns)
-	local maxHeight = 0
-	for _, column in ipairs(columns) do
-		local l, t, r, b = column:GetAnchorOffsets()
-		local pl, pt, pr, pb = column:GetAnchorPoints()
-		glog:debug(string.format("Column offsets: l=%d, t=%d, r=%d, b=%d", l, t, r, b))
-		glog:debug(string.format("Column anchors: l=%d, t=%d, r=%d, b=%d", pl, pt, pr, pb))
- 		if b - t > maxHeight then 
-			maxHeight = b - t
+function InterruptCoordinator:SetPlayerDisabled(playerName, disabled)
+	local player = self:GetPlayer(playerName)
+	if not player then return end
+	if self.useMinimalUI then
+		player.container:FindChild("DisabledOverlay"):Show(disabled)
+	else
+		for _, interrupt in ipairs(player.interrupts) do
+			if disabled then
+				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
+			else
+				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
+			end
+			interrupt.bar:FindChild("DisabledOverlay"):Show(disabled)
 		end
 	end
-	return maxHeight
 end
 
 function InterruptCoordinator:GetPlayer(playerName)
