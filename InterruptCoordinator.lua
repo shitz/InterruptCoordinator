@@ -128,8 +128,8 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.5.1"
-local kVersion = 501
+local kVersionString = "0.5.2"
+local kVersion = 502
 local kMinVersion = 301
 -----------------------------------------------------------------------------------------------
 -- Initialization
@@ -361,8 +361,6 @@ function InterruptCoordinator:OnBroadcastTimer()
 	-- Check if someone of the group is dead.
 	local n = GroupLib.GetMemberCount()
 	if n == 0 then
-		local player = GameLib.GetPlayerUnit()
-		if not player then return end
 		self:SetPlayerDisabled(player:GetName(), player:IsDead())
 	else
 		for i=1, n do
@@ -971,6 +969,7 @@ function InterruptCoordinator:AddPlayerToGroup(groupName, playerName)
 	else	
 		player.container = Apollo.LoadForm(self.xmlDoc, "PlayerContainer", group.columns[#group.columns], self)
 	end
+	player.container:SetData({name = playerName})
 	player.container:FindChild("PlayerName"):SetText(playerName)
 	player.interrupts = {}
 	table.insert(group.players, player)
@@ -1033,12 +1032,14 @@ function InterruptCoordinator:AddBarToPlayer(playerName, newInterrupt)
 	-- Use minimal UI when in raid.
 	if self.useMinimalUI then
 		interrupt.bar = Apollo.LoadForm(self.xmlDoc, "IconContainer", player.container:FindChild("Icons"), self)
+		interrupt.bar:SetData({ID = interrupt.ID})
 		interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
 		interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
 		interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
 		interrupt.bar:FindChild("Icon"):Show(true)
 	else
-		interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container, self)
+		interrupt.bar = Apollo.LoadForm(self.xmlDoc, "BarContainer", player.container:FindChild("Bars"), self)
+		interrupt.bar:SetData({ID = interrupt.ID})
 		interrupt.bar:FindChild("ProgressBar"):SetMax(newInterrupt.cooldown)
 		interrupt.bar:FindChild("ProgressBar"):SetProgress(newInterrupt.remainingCD)
 		interrupt.bar:FindChild("Icon"):SetSprite(GameLib.GetSpell(newInterrupt.spellID):GetIcon())
@@ -1109,25 +1110,17 @@ function InterruptCoordinator:LayoutGroupContainer(group)
 	local cnt = 1
 	local maxTotalHeight = 0
 	local totalHeight = 0
-	for _, player in spairs(group.players, sortByName) do
-		local height = self:LayoutPlayerContainer(player)
-		--local l, t, r, b = player.container:GetAnchorOffsets()
-		--player.container:SetAnchorOffsets(l, totalHeight, r, totalHeight + height)
-		totalHeight = totalHeight + kVerticalPlayerPadding + height
-		if totalHeight > maxTotalHeight then
-			maxTotalHeight = totalHeight
-		end
-		-- Reset cnt and totalHeight if we start a new column.
-		if cnt == self.playersPerColumn then
-			cnt = 0
-			totalHeight = 0
-		end	
+	for _, player in ipairs(group.players) do
+		self:LayoutPlayerContainer(player)
 	end
 	-- Layout columns
 	for _, column in ipairs(group.columns) do
+		local height = column:ArrangeChildrenVert(0, sortByName)
+		if height > maxTotalHeight then
+			maxTotalHeight = height
+		end
 		local l, t, r, b = column:GetAnchorOffsets()
-		column:SetAnchorOffsets(l, t, r, t + maxTotalHeight)
-		column:ArrangeChildrenVert(0)
+		column:SetAnchorOffsets(l, t, r, t + height)
 	end
 
 	-- Set group columns dimensions.
@@ -1156,18 +1149,12 @@ function InterruptCoordinator:LayoutPlayerContainer(player)
 		icons:ArrangeChildrenHorz(2)
 		totalHeight = kMinimalPlayerContainerHeight
 	else
-		-- Set total height to be kPlayerNameHeight  + ninterrupts * (kBarHeight + kVerticalPadding)
-		totalHeight = kPlayerNameHeight + ninterrupts * (kBarHeight + kVerticalBarPadding)
-		local l, t, r, b = player.container:GetAnchorOffsets()
-		player.container:SetAnchorOffsets(l, t, r, totalHeight)
-		
-		-- Layout interrupt bars.
-		local voffset = kPlayerNameHeight + kVerticalBarPadding
-		for idx, interrupt in spairs(player.interrupts, sortByID) do
-			l, t, r, b = interrupt.bar:GetAnchorOffsets()
-			interrupt.bar:SetAnchorOffsets(l, voffset, r, voffset + kBarHeight)
-			voffset = voffset + kBarHeight + kVerticalBarPadding
-		end
+		local barsHeight = player.container:FindChild("Bars"):ArrangeChildrenVert(0, sortByID)
+		totalHeight = kPlayerNameHeight + barsHeight	
+		local l, t, r, b = player.container:FindChild("Bars"):GetAnchorOffsets()
+		player.container:FindChild("Bars"):SetAnchorOffsets(l, t, r, t + barsHeight)
+		l, t, r, b = player.container:GetAnchorOffsets()
+		player.container:SetAnchorOffsets(l, t, r, t + totalHeight)
 	end
 	return totalHeight
 end
@@ -1192,15 +1179,20 @@ function InterruptCoordinator:SetPlayerDisabled(playerName, disabled)
 	local player = self:GetPlayer(playerName)
 	if not player then return end
 	if self.useMinimalUI then
-		player.container:FindChild("DisabledOverlay"):Show(disabled)
+		if disabled then
+			player.container:FindChild("DisabledOverlay"):SetOpacity(1, 100)
+		else
+			player.container:FindChild("DisabledOverlay"):SetOpacity(0, 100)
+		end
 	else
 		for _, interrupt in ipairs(player.interrupts) do
 			if disabled then
 				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorDisabled)
+				interrupt.bar:FindChild("DisabledOverlay"):SetOpacity(1, 100)
 			else
 				interrupt.bar:FindChild("ProgressBar"):SetBGColor(kProgressBarBGColorEnabled)
+				interrupt.bar:FindChild("DisabledOverlay"):SetOpacity(0, 100)
 			end
-			interrupt.bar:FindChild("DisabledOverlay"):Show(disabled)
 		end
 	end
 end
@@ -1287,12 +1279,12 @@ function spairs(t, order)
     end
 end
 
-function sortByName(t, a, b)
-	return t[a].name < t[b].name
+function sortByName(a, b)
+	return a:GetData().name < b:GetData().name
 end
 
-function sortByID(t, a, b)
-	return t[a].ID < t[b].ID
+function sortByID(a, b)
+	return a:GetData().ID < b:GetData().ID
 end
 
 -----------------------------------------------------------------------------------------------
