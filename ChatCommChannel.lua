@@ -52,35 +52,9 @@ function ChatCommChannel.new()
 	Apollo.RegisterTimerHandler("ChatChannelTimer", "OnTimer", self)
 	Apollo.RegisterEventHandler("ChatMessage", "OnChatMessage", self)
 	Apollo.CreateTimer("ChatChannelTimer", 0.1, true)
-	Apollo.StartTimer("ChatChannelTimer")
+	Apollo.StopTimer("ChatChannelTimer")
 	return self
 end
- 
--- function ChatCommChannel:SetGroupChannel(sGroupLeader)
-    -- if GroupLib.InGroup then
-		-- if not sGroupLeader then
-			-- local MemberCount = GroupLib.GetMemberCount()
-			-- if MemberCount == 1 then return end
-			-- -- local i = 1
-			-- -- while(not GroupLib.GetGroupMember(i).bIsLeader) do i=i+1 end
-			-- -- sGroupLeader = GroupLib.GetGroupMember(i).strCharacterName
-			-- for i=1, MemberCount do
-				-- local MemberInfo = GroupLib.GetGroupMember(i)
-				-- if MemberInfo.bIsLeader then
-						-- sGroupLeader = MemberInfo.strCharacterName
-						-- break
-				-- end
-			-- end
-		-- end
-		-- if sGroupLeader then
-			-- if not self.StartDelay then self:JoinChannel(string.format("Ftr%s", sGroupLeader)) end
-		-- else
-			-- self:Leave()
-		-- end
-    -- else 
-		-- self:Leave()
-    -- end
--- end
  
 function ChatCommChannel:Leave(Channel)
 	local strChannel
@@ -94,28 +68,6 @@ function ChatCommChannel:Leave(Channel)
 	local channel
 	for k,v in pairs(ChatSystemLib.GetChannels()) do
 		if v:GetName()==strChannel then
-			-- local chatAddons = {
-				-- "ChatLog",
-				-- "BetterChatLog",
-				-- "ChatFixed",
-				-- "ImprovedChatLog"
-			-- }
-			-- -- release channel type to chat addons
-			-- for _,w in pairs(chatAddons) do
-				-- local chatAddon = Apollo.GetAddon(w)
-				-- if chatAddon then
-					-- self:Unhook(chatAddon, "OnChatMessage")
-					-- -- for key, wndChat in pairs(chatAddon.tChatWindows) do
-						-- -- local tWindowData = wndChat:GetData()
-						-- -- if not tWindowData.tViewedChannels[v:GetType()] then -- check flags for filtering
-							-- -- tWindowData.tViewedChannels[v:GetType()] = v
-							-- -- chatAddon:HelperAddChannelToAll(v:GetType())
-						-- -- end
-						-- -- wndChat:SetData(tWindowData)
-					-- -- end
-					-- -- chatAddon = nil
-				-- end
-			--end
 			v:Leave()
 			break
 		end
@@ -143,15 +95,12 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 		self.sChannelName = strChannel
 		self.sCallBackHandler = callBackHandler
 		self.tCallBackTarget = callBackTarget
-		--Print("Callback target: " .. self.tCallBackTarget[self.sCallBackHandler])
-		--Print("Callback handler: " .. self.sCallBackHandler)
-		Apollo.StartTimer("ChatChannelTimer")
 	end
 
 	-- Hide this Channel from Chat Addons
 	local chanType
 	for k,v in pairs(ChatSystemLib.GetChannels()) do
-		Print(v:GetName() .. " " .. v:GetType())
+		--Print(v:GetName() .. " " .. v:GetType())
 		if v:GetName()==strChannel then chanType=v:GetType() break end
 	end
 	local chatAddons = {
@@ -164,20 +113,9 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 		self.chatAddon = Apollo.GetAddon(v)
 		if self.chatAddon then break end
 	end
-		--if chatAddon and chatAddon.tAllViewedChannels then
-		--	chatAddon.tAllViewedChannels[chanType] = nil
-		--end
+
 	if self.chatAddon then
 		self:RawHook(self.chatAddon, "OnChatMessage", "ChatMessageHook")
-			-- for key, wndChat in pairs(chatAddon.tChatWindows) do
-				-- local tWindowData = wndChat:GetData()
-				-- if tWindowData.tViewedChannels[chanType] then -- check flags for filtering
-					-- tWindowData.tViewedChannels[chanType] = nil
-					-- chatAddon:HelperRemoveChannelFromAll(chanType)
-				-- end
-				-- wndChat:SetData(tWindowData)
-			-- end
-			
 	end
 end
  
@@ -246,6 +184,9 @@ function ChatCommChannel:SendMessage(message)
 end
  
 function ChatCommChannel:PushToOB(strMessage)
+	if #self.tOutputBuffer == 0 then
+		Apollo.StartTimer("ChatChannelTimer")
+	end
     self.tOutputBuffer[#self.tOutputBuffer+1] = strMessage
 end
  
@@ -262,6 +203,8 @@ function ChatCommChannel:OnTimer()
 				end
 			end
 		end
+	else
+		Apollo.StopTimer("ChatChannelTimer")
 	end
 end
  
@@ -321,8 +264,6 @@ function ChatCommChannel:OnChatMessage(channelCurrent, tMessage)
 		-- Process Message
 		if tMsg then
 			if not self.sCallBackHandler or not self.tCallBackTarget then return end
-			--Print("Callback target: " .. self.tCallBackTarget[self.sCallBackHandler])
-			--Print("Callback handler: " .. self.sCallBackHandler)
 			self.tCallBackTarget[self.sCallBackHandler](self.tCallBackTarget, channelCurrent:GetName(), tMsg)
 		end
 	end

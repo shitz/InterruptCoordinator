@@ -128,9 +128,9 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.5.2"
-local kVersion = 502
-local kMinVersion = 301
+local kVersionString = "0.6.0"
+local kVersion = 600
+local kMinVersion = 600
 -----------------------------------------------------------------------------------------------
 -- Initialization
 -----------------------------------------------------------------------------------------------
@@ -143,8 +143,6 @@ function InterruptCoordinator:new(o)
 	self.configForm = nil
 	self.saveData = {}
 
-	-- self.syncChannel = {channel = nil, name = ""}
-	-- self.broadCastChannel = { channel = nil, name = ""}
 	self.commChannel = nil
 	self.groupLeaderInfo = nil
 	self.partyInterrupts = {}
@@ -179,7 +177,7 @@ function InterruptCoordinator:OnLoad()
 	-- Setup Gemini Logging
     GeminiLogging = Apollo.GetPackage("Gemini:Logging-1.2").tPackage
 	glog = GeminiLogging:GetLogger({
-        level = GeminiLogging.DEBUG,
+        level = GeminiLogging.INFO,
         pattern = "%d %n %c %l - %m",
         appender = "GeminiConsole"
     })
@@ -219,10 +217,6 @@ function InterruptCoordinator:OnDocLoaded()
 		Apollo.RegisterEventHandler("ICCommJoinResult", "OnICCommJoinResult", self)
 
 		Apollo.RegisterEventHandler("CombatLogCCState", "OnCombatLogCCState", self)
-		--Apollo.RegisterEventHandler("CombatLogDeath", "OnCombatLogDeath", self)
-		--Apollo.RegisterEventHandler("CombatLogRessurect", "OnCombatLogRessurect", self)
-		--Apollo.RegisterEventHandler("CombatLogInterrupted", "OnCombatLogInterrupted", self)
-		--Apollo.RegisterEventHandler("CombatLogModifyInterruptArmor", "OnCombatLogModifyInterruptArmor", self)
 
 		Apollo.RegisterEventHandler("AbilityBookChange", "OnAbilityBookChange", self)
 		Apollo.RegisterTimerHandler("DelayedAbilityBookChange", "OnDelayedAbilityBookChange", self)
@@ -301,8 +295,6 @@ function InterruptCoordinator:Reset()
 		group.container:Destroy()
 	end
 		
-	--self.syncChannel = {channel = nil, name = ""}
-	--self.broadCastChannel = {channel = nil, name = ""}
 	self:LeaveGroupChannel()
 	
 	self.groupLeaderInfo = nil
@@ -674,7 +666,6 @@ function InterruptCoordinator:OnGroupJoin()
 end
 
 function InterruptCoordinator:OnGroupLeft()
-	--self:Reset()
 	if GroupLib.InGroup() then
 		glog:debug("LeftGroup: Still in group!")
 	else
@@ -781,20 +772,6 @@ end
 -----------------------------------------------------------------------------------------------
 -- Joins the group channel for inter addon communication.
 function InterruptCoordinator:JoinGroupChannel(leaderName)
-	-- Join the sync channel.
-	-- local syncName = string.format("IC_sync_%s", leaderName)
-	-- if self.syncChannel.name ~= syncName then
-		-- self.syncChannel.name = syncName
-		-- self.syncChannel.channel = ICCommLib.JoinChannel(syncName, "OnCommMessageReceived", self)
-		-- glog:debug("Joined channel " .. syncName)
-	-- end
-	-- -- Join broadcast channel.
-	-- local bcName = string.format("IC_bc_%s", leaderName)
-	-- if self.broadCastChannel.name ~= bcName then
-		-- self.broadCastChannel.name = bcName
-		-- self.broadCastChannel.channel = ICCommLib.JoinChannel(bcName, "OnCommMessageReceived", self)
-		-- glog:debug("Joined channel " .. bcName)
-	-- end
 	local chanName = string.format("IC%s", leaderName)
 	if not self.commChannel or self.commChannel.sChannelName ~= ChatCommChannel() then
 		if self.commChannel then self.commChannel:Leave() end
@@ -826,41 +803,6 @@ function InterruptCoordinator:SendMsg(msg)
 	end
 	self.commChannel:SendMessage(msg)
 end
-
--- Send a message on the communication channel.
--- function InterruptCoordinator:SendOnBroadCastChannel(msg)
-	-- -- Sanity check for broadcast channel.
-	-- if self.groupLeaderInfo then
-		-- local expectedName = string.format("IC_bc_%s", self.groupLeaderInfo.strCharacterName)
-		-- if self.broadCastChannel.name ~= expectedName then
-			-- glog:warn("You are in the wrong broadcast channel for this group.\n" ..
-					  -- "Current: " .. self.broadCastChannel.name .. "\n" ..
-					  -- "Expected: " .. expectedName)
-			-- return
-		-- end
-	-- end
-	-- if self.broadCastChannel.channel then
-		-- self.broadCastChannel.channel:SendMessage(msg)
-		-- --glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
-	-- end
--- end
-
--- function InterruptCoordinator:SendOnSyncChannel(msg)
-	-- -- Sanity check for sync channel.
-	-- if self.groupLeaderInfo then
-		-- local expectedName = string.format("IC_sync_%s", self.groupLeaderInfo.strCharacterName)
-		-- if self.syncChannel.name ~= expectedName then
-			-- glog:warn("You are in the wrong broadcast channel for this group.\n" ..
-					  -- "Current: " .. self.syncChannel.name .. "\n" ..
-					  -- "Expected: " .. expectedName)
-			-- return
-		-- end
-	-- end
-	-- if self.syncChannel.channel then
-		-- self.syncChannel.channel:SendMessage(msg)
-		-- --glog:debug(string.format("Send message on channel %d: %s", idx, dump(msg))) 
-	-- end
--- end
 
 -- Broadcasts the local player interrupts.
 function InterruptCoordinator:SendPlayerInterrupts()
@@ -1217,7 +1159,13 @@ function InterruptCoordinator:SetPlayerDisabled(playerName, disabled)
 		if disabled then
 			player.container:FindChild("DisabledOverlay"):SetOpacity(1, 100)
 		else
-			player.container:FindChild("DisabledOverlay"):SetOpacity(0, 100)
+			--Print("Hiding disabledOverlay")
+			local overlay = player.container:FindChild("DisabledOverlay")
+			if not overlay then
+				Print("fuck this")
+				return
+			end
+			overlay:SetOpacity(0, 100)
 		end
 	else
 		for _, interrupt in ipairs(player.interrupts) do
