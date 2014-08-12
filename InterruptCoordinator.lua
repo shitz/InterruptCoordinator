@@ -163,7 +163,8 @@ function InterruptCoordinator:Init()
 	local bHasConfigureFunction = false
 	local strConfigureButtonText = "InterruptCoordinator"
 	local tDependencies = {
-		"Gemini:Logging-1.2"
+		"Gemini:Logging-1.2",
+		"Gemini:Hook-1.0"
 	}
     Apollo.RegisterAddon(self, bHasConfigureFunction, strConfigureButtonText, tDependencies)
 end
@@ -178,7 +179,7 @@ function InterruptCoordinator:OnLoad()
 	-- Setup Gemini Logging
     GeminiLogging = Apollo.GetPackage("Gemini:Logging-1.2").tPackage
 	glog = GeminiLogging:GetLogger({
-        level = GeminiLogging.INFO,
+        level = GeminiLogging.DEBUG,
         pattern = "%d %n %c %l - %m",
         appender = "GeminiConsole"
     })

@@ -37,6 +37,13 @@ function ChatCommChannel.new()
 		Print("LibJSON not found")
 		return nil 
 	end
+	self.geminiHook = Apollo.GetPackage("Gemini:Hook-1.0").tPackage
+	if not self.geminiHook then
+		Print("GeminiHook not found")
+		return
+	end
+	self.geminiHook:Embed(self)
+	self.chatAddon = nil
 	self.tInputBuffer = {}
 	self.tOutputBuffer = {}
 	self.fLastClock = nil
@@ -87,28 +94,33 @@ function ChatCommChannel:Leave(Channel)
 	local channel
 	for k,v in pairs(ChatSystemLib.GetChannels()) do
 		if v:GetName()==strChannel then
-			local chatAddons = {
-				"ChatLog",
-				"BetterChatLog",
-				"ChatFixed",
-				"ImprovedChatLog"
-			}
-			-- release channel type to chat addons
-			for _,w in pairs(chatAddons) do
-				local chatAddon = Apollo.GetAddon(w)
-				if chatAddon then
-					for key, wndChat in pairs(chatAddon.tChatWindows) do
-						if not wndChat:GetData().tViewedChannels[v:GetType()] then -- check flags for filtering
-							wndChat:GetData().tViewedChannels[v:GetType()] = v
-						end
-					end
-					chatAddon = nil
-				end
-			end
+			-- local chatAddons = {
+				-- "ChatLog",
+				-- "BetterChatLog",
+				-- "ChatFixed",
+				-- "ImprovedChatLog"
+			-- }
+			-- -- release channel type to chat addons
+			-- for _,w in pairs(chatAddons) do
+				-- local chatAddon = Apollo.GetAddon(w)
+				-- if chatAddon then
+					-- self:Unhook(chatAddon, "OnChatMessage")
+					-- -- for key, wndChat in pairs(chatAddon.tChatWindows) do
+						-- -- local tWindowData = wndChat:GetData()
+						-- -- if not tWindowData.tViewedChannels[v:GetType()] then -- check flags for filtering
+							-- -- tWindowData.tViewedChannels[v:GetType()] = v
+							-- -- chatAddon:HelperAddChannelToAll(v:GetType())
+						-- -- end
+						-- -- wndChat:SetData(tWindowData)
+					-- -- end
+					-- -- chatAddon = nil
+				-- end
+			--end
 			v:Leave()
 			break
 		end
 	end
+	self:UnhookAll()
 	self.sChannelName = nil
 	Apollo.StopTimer("ChatChannelTimer")
 end
@@ -139,6 +151,7 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 	-- Hide this Channel from Chat Addons
 	local chanType
 	for k,v in pairs(ChatSystemLib.GetChannels()) do
+		Print(v:GetName() .. " " .. v:GetType())
 		if v:GetName()==strChannel then chanType=v:GetType() break end
 	end
 	local chatAddons = {
@@ -148,15 +161,23 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 		"ImprovedChatLog"
 	}
 	for k,v in pairs(chatAddons) do
-		local chatAddon = Apollo.GetAddon(v)
-		if chatAddon and chatAddon.tChatWindows then
-			for key, wndChat in pairs(chatAddon.tChatWindows) do
-				if wndChat:GetData().tViewedChannels[chanType] then -- check flags for filtering
-						wndChat:GetData().tViewedChannels[chanType] = nil
-				end
-			end
-			chatAddon = nil
-		end
+		self.chatAddon = Apollo.GetAddon(v)
+		if self.chatAddon then break end
+	end
+		--if chatAddon and chatAddon.tAllViewedChannels then
+		--	chatAddon.tAllViewedChannels[chanType] = nil
+		--end
+	if self.chatAddon then
+		self:RawHook(self.chatAddon, "OnChatMessage", "ChatMessageHook")
+			-- for key, wndChat in pairs(chatAddon.tChatWindows) do
+				-- local tWindowData = wndChat:GetData()
+				-- if tWindowData.tViewedChannels[chanType] then -- check flags for filtering
+					-- tWindowData.tViewedChannels[chanType] = nil
+					-- chatAddon:HelperRemoveChannelFromAll(chanType)
+				-- end
+				-- wndChat:SetData(tWindowData)
+			-- end
+			
 	end
 end
  
@@ -307,61 +328,15 @@ function ChatCommChannel:OnChatMessage(channelCurrent, tMessage)
 	end
 end
  
--- function ChatCommChannel:OnGroupJoin()
-	-- local MemberCount = GroupLib.GetMemberCount()
-	-- if MemberCount == 1 then return end
+ function ChatCommChannel:ChatMessageHook(luaCaller, channel, msg)
+	if self.sChannelName and self.sChannelName == channel:GetName() then
+		--Print("Hide msg on comm channel")
+		return
+	else
+		self.hooks[self.chatAddon].OnChatMessage(self.chatAddon, channel, msg)
+	end
+ end
 
-	-- local GroupLeader
-	-- for i=1, MemberCount do
-		-- local MemberInfo = GroupLib.GetGroupMember(i)
-		-- if MemberInfo.bIsLeader then
-			-- GroupLeader = MemberInfo.strCharacterName
-			-- break
-		-- end
-	-- end
-
-	-- self:SetGroupChannel(GroupLeader)
--- end
- 
--- function ChatCommChannel:OnGroupLeft()
-    -- self:Leave()
--- end
- 
--- function ChatCommChannel:OnGroupUpdated()
-	-- self:OnGroupJoin()
-	-- if not self.bBeenGreeted and self.HelloCount < 20 then
-		-- self:SendMessage({type="FtrHello", strModule="ChatCommChannel", fVersion=self.fVersion, strSender=GameLib.GetPlayerUnit():GetName()})
-		-- self.HelloCount = self.HelloCount + 1
-	-- end
--- end
- 
--- function ChatCommChannel:OnComFtrHello(tMsg)
-	-- -- register client
-	-- self.tClients[tMsg.strSender] = tMsg.fVersion
-	-- -- respond
-	-- self:SendResponse()
-	-- -- if a module is running, call resync
-	-- if self.Ftr.Modules then
-		-- for k, v in pairs(self.Ftr.Modules) do
-				-- --if v:__IsRunning() then v:__SendStatus(tMsg.strSender) end
-		-- end
-	-- end
--- end
- 
--- function ChatCommChannel:OnComFtrHelloBack(tMsg)
-	-- self.bBeenGreeted = true
-	-- self.tClients[tMsg.strSender] = tMsg.fVersion
--- end
- 
--- function ChatCommChannel:SendResponse()
-     -- self:SendMessage({type="FtrHelloBack", strModule="ChatCommChannel", fVersion=self.fVersion, strSender=GameLib.GetPlayerUnit():GetName()})
--- end
- 
--- function ChatCommChannel:OnComFtrSndStatus(tMsg)
-	-- if (tMsg.target==GameLib.GetPlayerUnit():GetName() and not self:GetModule(tMsg.strModule)) then
-			-- self.Ftr:ResumeModule(tMsg.strModule, tMsg.tData)
-	-- end
--- end
  
 function ChatCommChannel:GetCopy(orig)
     local orig_type = type(orig)
