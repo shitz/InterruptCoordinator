@@ -28,18 +28,22 @@ setmetatable(ChatCommChannel, {
 })
  
 function ChatCommChannel.new()
+	Print("In ChatCommChannel new")
 	local self = setmetatable({}, ChatCommChannel)
 	self.sChannelName = nil
 	self.sCallBackHandler = nil
 	self.tCallBackTarget = nil
 	self.json = Apollo.GetPackage("Lib:dkJSON-2.5").tPackage
-	if not self.json then return nil end
+	if not self.json then 
+		Print("LibJSON not found")
+		return nil 
+	end
 	self.tInputBuffer = {}
 	self.tOutputBuffer = {}
 	self.fLastClock = nil
 	self.Floodlimit = 0
 	self.RanDelay = 0
-	Apollo.RegisterEventHandler("ChatChannelTimer", "OnTimer", self)
+	Apollo.RegisterTimerHandler("ChatChannelTimer", "OnTimer", self)
 	Apollo.RegisterEventHandler("ChatMessage", "OnChatMessage", self)
 	Apollo.CreateTimer("ChatChannelTimer", 0.1, true)
 	Apollo.StartTimer("ChatChannelTimer")
@@ -127,6 +131,7 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 		self.sChannelName = strChannel
 		self.sCallBackHandler = callBackHandler
 		self.tCallBackTarget = callBackTarget
+		Apollo.StartTimer("ChatChannelTimer")
 	end
 
 	-- Hide this Channel from Chat Addons
@@ -176,7 +181,7 @@ function ChatCommChannel:SendMessage(message)
 			local strValue = self.json.encode(v)
 			local nCount = #strValue+#k+10
 			if (nCount+charcount) < (limit) then
-					--Print("Key "..k.." is small enough ("..(nCount).." Letters)")
+					Print("Key "..k.." is small enough ("..(nCount).." Letters)")
 					tMessageProto[k] = v
 					charcount = charcount + nCount
 			else
@@ -203,7 +208,7 @@ function ChatCommChannel:SendMessage(message)
 				tMessages[#tMessages]._key = key
 				tMessages[#tMessages]._lastpart = lastpart
 				tMessages[#tMessages]._data = BigChunk:sub(starting, ending)
-				--Print("Chunk "..i..": "..tMessage._data)
+				Print("Chunk "..i..": "..tMessage._data)
 			end
 		end
 
@@ -212,6 +217,7 @@ function ChatCommChannel:SendMessage(message)
 			self:PushToOB(self.json.encode(message))
 		end
 	else
+		Print("Pushing msg to outputbuffer")
 		self:PushToOB(self.json.encode(message))
 	end
 end
@@ -227,6 +233,7 @@ function ChatCommChannel:OnTimer()
 		if self.sChannelName then
 			for k,v in pairs(ChatSystemLib.GetChannels()) do
 				if (v:GetName()==self.sChannelName and v:CanSend()) then
+					Print("SendMessage: " .. self.tOutputBuffer[1])
 					v:Send(table.remove(self.tOutputBuffer, 1))
 					self.RanDelay=math.random(0.001, 0.5)
 				end
@@ -257,7 +264,7 @@ function ChatCommChannel:OnChatMessage(channelCurrent, tMessage)
 		if tMsg then
 			-- if its a partial message
 			if tMsg._part then
-				--Print("Received Part "..tMsg._part.." of "..tMsg._lastpart)
+				Print("Received Part "..tMsg._part.." of "..tMsg._lastpart)
 				if not self.tInputBuffer[tMsg._id] then self.tInputBuffer[tMsg._id] = {} end
 
 				if not self.tInputBuffer[tMsg._id][tMsg._key] then
@@ -276,18 +283,18 @@ function ChatCommChannel:OnChatMessage(channelCurrent, tMessage)
 							tMsg._lastpart = nil
 							tMsg._data = nil
 					end
-					--Print("Rebuilt Message: "..self.json.encode(tMsg))
+					Print("Rebuilt Message: "..self.json.encode(tMsg))
 				else
 					return true
 				end
 			end
-			-- for k,v in pairs(tMsg) do
-				-- --Print("Row "..k..": "..v)
-			-- end
+			--for k,v in pairs(tMsg) do
+			--	Print("Row "..k..": "..v)
+			--end
 		else
 			Print("Received data is corrupted")
 		end
-		--Print("Received: "..self.json.encode(tMsg))
+		Print("Received: "..self.json.encode(tMsg))
 		-- Process Message
 		if tMsg then
 			if not self.sCallBackHandler or not self.tCallBackTarget then return end
