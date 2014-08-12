@@ -91,7 +91,8 @@ function ChatCommChannel:Leave(Channel)
 			local chatAddons = {
 				"ChatLog",
 				"BetterChatLog",
-				"ChatFixed"
+				"ChatFixed",
+				"ImprovedChatLog"
 			}
 			-- release channel type to chat addons
 			for _,w in pairs(chatAddons) do
@@ -131,6 +132,8 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 		self.sChannelName = strChannel
 		self.sCallBackHandler = callBackHandler
 		self.tCallBackTarget = callBackTarget
+		--Print("Callback target: " .. self.tCallBackTarget[self.sCallBackHandler])
+		Print("Callback handler: " .. self.sCallBackHandler)
 		Apollo.StartTimer("ChatChannelTimer")
 	end
 
@@ -142,7 +145,8 @@ function ChatCommChannel:Join(strChannel, callBackHandler, callBackTarget)
 	local chatAddons = {
 		"ChatLog",
 		"BetterChatLog",
-		"ChatFixed"
+		"ChatFixed",
+		"ImprovedChatLog"
 	}
 	for k,v in pairs(chatAddons) do
 		local chatAddon = Apollo.GetAddon(v)
@@ -298,7 +302,9 @@ function ChatCommChannel:OnChatMessage(channelCurrent, tMessage)
 		-- Process Message
 		if tMsg then
 			if not self.sCallBackHandler or not self.tCallBackTarget then return end
-			self.tCallBackTarget[self.sCallBackHandler](channelCurrent:GetName(), tMsg)
+			--Print("Callback target: " .. self.tCallBackTarget[self.sCallBackHandler])
+			Print("Callback handler: " .. self.sCallBackHandler)
+			self.tCallBackTarget[self.sCallBackHandler](self.tCallBackTarget, channelCurrent:GetName(), tMsg)
 		end
 	end
 end
@@ -371,6 +377,19 @@ function ChatCommChannel:GetCopy(orig)
         copy = orig
     end
     return copy
+end
+
+function ChatCommChannel:dump(o)
+	if type(o) == 'table' then
+		local s = '{ '
+		for k,v in pairs(o) do
+			if type(k) ~= 'number' then k = '"'..k..'"' end
+				s = s .. '['..k..'] = ' .. self:dump(v) .. ','
+		end
+		return s .. '} '
+	else
+		return tostring(o)
+	end
 end
  
 if _G["ICLibs"] == nil then

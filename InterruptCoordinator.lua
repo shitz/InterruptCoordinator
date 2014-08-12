@@ -882,6 +882,7 @@ end
 
 -- Main message handling routine.
 function InterruptCoordinator:OnCommMessageReceived(channel, msg)
+	glog:debug("Msg received: " .. dump(msg))
 	if not self.commChannel or self.commChannel.sChannelName ~= channel then
 		glog:debug("Ignoring message on non-group channel " .. channel)
 		return
