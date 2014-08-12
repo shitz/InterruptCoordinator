@@ -2,6 +2,8 @@
 <Addon Author="Regex" APIVersion="9" Name="InterruptCoordinator" Description="Lets you see the interrupts of your group members and when they use them.">
     <Script Name="libs\inspect.lua"/>	
     <Script Name="libs\GeminiLogging.lua"/>
+	<Script Name="libs\LibJSON-2.5.lua"/>
+	<Script Name="ChatCommChannel.lua"/>
     <Script Name="InterruptCoordinator.lua"/>
     <Form Name="InterruptCoordinator.xml"/>
 </Addon>
