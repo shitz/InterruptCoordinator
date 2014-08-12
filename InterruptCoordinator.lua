@@ -794,7 +794,7 @@ function InterruptCoordinator:JoinGroupChannel(leaderName)
 		-- self.broadCastChannel.channel = ICCommLib.JoinChannel(bcName, "OnCommMessageReceived", self)
 		-- glog:debug("Joined channel " .. bcName)
 	-- end
-	local chanName = string.format("IC_%s", leaderName)
+	local chanName = string.format("IC%s", leaderName)
 	if not self.commChannel or self.commChannel.sChannelName ~= ChatCommChannel() then
 		if self.commChannel then self.commChannel:Leave() end
 		self.commChannel = ChatCommChannel()
@@ -815,7 +815,7 @@ function InterruptCoordinator:SendMsg(msg)
 	if not self.commChannel then return end
 	-- Sanity check for broadcast channel.
 	if self.groupLeaderInfo then
-		local expectedName = string.format("IC_%s", self.groupLeaderInfo.strCharacterName)
+		local expectedName = string.format("IC%s", self.groupLeaderInfo.strCharacterName)
 		if self.commChannel.sChannelName ~= expectedName then
 			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
 					  "Current: " .. self.commChannel.sChannelName .. "\n" ..
