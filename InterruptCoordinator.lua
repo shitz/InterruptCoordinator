@@ -91,6 +91,8 @@ local MsgType = {
 	SYNC_REQUEST = 3,
 }
 
+local kCommChannelPrefix = "ICCommChannel"
+
 local kUsageString = "'/ic help' - Displays this help\n" .. 
 					 "'/ic config' - Shows configuration options\n" ..
 					 "'/ic start' - Starts InterruptCoordinator\n" ..
@@ -128,9 +130,9 @@ end
 local kProgressBarBGColorEnabled = hexToCColor("069e0a")
 local kProgressBarBGColorDisabled = "darkgray"
 
-local kVersionString = "0.6.0"
-local kVersion = 600
-local kMinVersion = 600
+local kVersionString = "0.6.1"
+local kVersion = 601
+local kMinVersion = 601
 -----------------------------------------------------------------------------------------------
 -- Initialization
 -----------------------------------------------------------------------------------------------
@@ -198,6 +200,8 @@ function InterruptCoordinator:OnDocLoaded()
 			Apollo.AddAddonErrorText(self, "Could not load the main window for some reason.")
 			return
 		end
+		
+		self:CleanUpChannels()
 		
 	    self.configForm:Show(false, true)
 
@@ -772,7 +776,7 @@ end
 -----------------------------------------------------------------------------------------------
 -- Joins the group channel for inter addon communication.
 function InterruptCoordinator:JoinGroupChannel(leaderName)
-	local chanName = string.format("IC%s", leaderName)
+	local chanName = string.format("%s%s", kCommChannelPrefix, leaderName)
 	if not self.commChannel or self.commChannel.sChannelName ~= ChatCommChannel() then
 		if self.commChannel then self.commChannel:Leave() end
 		self.commChannel = ChatCommChannel()
@@ -891,6 +895,17 @@ function InterruptCoordinator:ShouldPeriodicallyBroadcastCDs()
 		return true
 	else
 		return false
+	end
+end
+
+-- Makes sure we leave all channels starting with "IC".
+function InterruptCoordinator:CleanUpChannels()
+	if ChatSystemLib.GetChannels() then
+		for k,v in pairs(ChatSystemLib.GetChannels()) do
+			if v:GetName() and string.find(v:GetName(), kCommChannelPrefix) then
+				v:Leave()
+			end
+		end
 	end
 end
 -----------------------------------------------------------------------------------------------
