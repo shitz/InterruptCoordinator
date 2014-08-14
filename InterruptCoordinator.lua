@@ -797,7 +797,7 @@ function InterruptCoordinator:SendMsg(msg)
 	if not self.commChannel then return end
 	-- Sanity check for broadcast channel.
 	if self.groupLeaderInfo then
-		local expectedName = string.format("IC%s", self.groupLeaderInfo.strCharacterName)
+		local expectedName = string.format("%s%s", kCommChannelPrefix, self.groupLeaderInfo.strCharacterName)
 		if self.commChannel.sChannelName ~= expectedName then
 			glog:warn("You are in the wrong broadcast channel for this group.\n" ..
 					  "Current: " .. self.commChannel.sChannelName .. "\n" ..
