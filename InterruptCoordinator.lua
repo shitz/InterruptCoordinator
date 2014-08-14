@@ -91,7 +91,7 @@ local MsgType = {
 	SYNC_REQUEST = 3,
 }
 
-local kCommChannelPrefix = "ICCommChannel"
+local kCommChannelPrefix = "ICCC"
 
 local kUsageString = "'/ic help' - Displays this help\n" .. 
 					 "'/ic config' - Shows configuration options\n" ..
